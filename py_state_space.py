@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 from scipy.spatial.distance import squareform
 import sys
 from statsmodels.tsa.stattools import acf
-import kalman
 import copy
 
 def getModel(trend=1,period=7,ar=3):
@@ -98,7 +97,7 @@ class PyStateSpace:
  
         return (self.state_predictor, self.covariance_predictor, self.state_filter, self.covariance_filter, self.y_forecast, self.cov_forecast)
 
-    def logLikelyfood(self, theta, y, x0, context):
+    def logLikelyfood(self, theta, y, x0):
         
         #n_cover = (self.b.shape[1] ** 2 - self.b.shape[1]) / 2
         #sigma_Q = np.matrix(np.diag(np.exp(theta[:self.b.shape[1]])))#+squareform(theta[self.b.shape[1]:self.b.shape[1] + n_cover]))
@@ -110,28 +109,28 @@ class PyStateSpace:
         #print parameterA
         sigma_w_arg =  copy.deepcopy(sigma_w.tolist())
         #print type(sigma_w_arg)
-        _, _, _, _, y_forecast, cov_forecast = kalman.filter(context,y.tolist(),self.A.tolist(),self.b.tolist(),self.c.tolist(),sigma_Q.tolist(),parameterA,x0.tolist())
-        sys.exit(1)
+        #_, _, _, _, y_forecast, cov_forecast = kalman.filter(context,y.tolist(),self.A.tolist(),self.b.tolist(),self.c.tolist(),sigma_Q.tolist(),parameterA,x0.tolist())
+        #sys.exit(1)
         #print parameterA
         #print sigma_w
-        #_, _, _, _, y_forecast, cov_forecast = self.filter(y, sigma_Q, sigma_w, x0)
+        _, _, _, _, y_forecast, cov_forecast = self.filter(y, sigma_Q, sigma_w, x0)
         #print np.array([y_forecast[-1][0]])
         y_forecast = np.array([float(yf[0]) for yf in y_forecast])
         cov_forecast = np.array([cf[0] for cf in cov_forecast])
         
         r = np.sum(np.log(1. / (2. * math.pi * cov_forecast)) - (y - y_forecast)  ** 2 / (2 * cov_forecast))
-        #print "theta:{} loglike:{}".format(theta,r)
+        print "theta:{} loglike:{}".format(theta,r)
         
         return -r
 
     def mle(self, y, x0, method='differential_evolution'):
-        context = kalman.init(y.shape[0],1,x0.shape[0], self.b.shape[1])
+        #context = kalman.init(y.shape[0],1,x0.shape[0], self.b.shape[1])
         #n_cover = (self.b.shape[1] ** 2 - self.b.shape[1]) / 2
         x_min=1e-5
         x_max=2e+7
         
         if method == "differential_evolution":
-            r = optimize.differential_evolution(self.logLikelyfood, args=(y, x0, context),bounds=[(x_min,x_max)] * (self.b.shape[1] + 1),init='random',popsize=50)
+            r = optimize.differential_evolution(self.logLikelyfood, args=(y, x0),bounds=[(x_min,x_max)] * (self.b.shape[1] + 1),init='random',popsize=50)
         elif method == "slsqp":
             theta = np.random.random(self.b.shape[1] + 1) * x_max
             r = optimize.minimize(self.logLikelyfood,theta,method="L-BFGS-B",args=(y, x0),bounds=[(x_min,x_max)] * (self.b.shape[1] + 1))
