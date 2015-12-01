@@ -97,16 +97,17 @@ class PyStateSpace:
  
         return (self.state_predictor, self.covariance_predictor, self.state_filter, self.covariance_filter, self.y_forecast, self.cov_forecast)
 
-    def logLikelyfood(self, theta, y, x0, context):
+    def logLikelyfood(self, theta, y, x0, context, method):
         
         #n_cover = (self.b.shape[1] ** 2 - self.b.shape[1]) / 2
-        #sigma_Q = np.matrix(np.diag(np.exp(theta[:self.b.shape[1]])))#+squareform(theta[self.b.shape[1]:self.b.shape[1] + n_cover]))
-        #sigma_w = np.matrix(np.exp(theta[self.b.shape[1]:]))
-        
-        sigma_Q = np.matrix(np.diag(theta[:self.b.shape[1]]))
-        sigma_w = np.matrix(theta[self.b.shape[1]:])
+        if method == 'Powell':
+            sigma_Q = np.matrix(np.diag(np.exp(theta[:self.b.shape[1]])))#+squareform(theta[self.b.shape[1]:self.b.shape[1] + n_cover]))
+            sigma_w = np.matrix(np.exp(theta[self.b.shape[1]:]))
+        else:
+            sigma_Q = np.matrix(np.diag(theta[:self.b.shape[1]]))
+            sigma_w = np.matrix(theta[self.b.shape[1]:])
+
         if True:
-            
             #y_forecast, cov_forecast = kalman.filter(context,self.A.tolist(),self.b.tolist(),self.c.tolist(),sigma_Q.tolist(),sigma_w.tolist(),x0)
             #y_forecast = np.array([float(yf[0]) for yf in y_forecast])
             #cov_forecast = np.array([cf[0] for cf in cov_forecast])
@@ -116,25 +117,28 @@ class PyStateSpace:
             cov_forecast = np.array([cf[0,0] for cf in cov_forecast])
             y_forecast = np.array([yf[0,0] for yf in y_forecast])
             r = np.sum(np.log(1. / (2. * math.pi * cov_forecast)) - (y - y_forecast)  ** 2 / (2 * cov_forecast))
-        #print "theta:{} loglike:{}".format(theta,r)
+        print "theta:{} loglike:{}".format(theta,r)
         
         return -r
 
-    def mle(self, y, x0, method='differential_evolution'):
+    def mle(self, y, x0, method='Powell'):
         arg_x0 = [x[0] for x in x0]
         context = kalman.init(y.tolist(),self.A.tolist(),self.b.tolist(),self.c.tolist(), arg_x0, 1,x0.shape[0], self.b.shape[1])
         #n_cover = (self.b.shape[1] ** 2 - self.b.shape[1]) / 2
         x_min=1e-6
         x_max=2e+8
         
+        args = (y, x0, context, method)
+        
+        
         if method == "differential_evolution":
-            #r = optimize.differential_evolution(self.logLikelyfood, args=(y, x0, context),bounds=[(x_min,x_max)] * (self.b.shape[1] + 1),popsize=150,mutation=0.25,recombination=0.25)
-            r = optimize.differential_evolution(self.logLikelyfood, args=(y, x0, context),bounds=[(x_min,x_max)] * (self.b.shape[1] + 1))
+            r = optimize.differential_evolution(self.logLikelyfood, args=args,bounds=[(x_min,x_max)] * (self.b.shape[1] + 1),popsize=150,mutation=0.25,recombination=0.25)
         elif method == "slsqp":
             theta = np.random.random(self.b.shape[1] + 1) * x_max
-            r = optimize.minimize(self.logLikelyfood,theta,method="L-BFGS-B",args=(y, x0, context),bounds=[(x_min,x_max)] * (self.b.shape[1] + 1))
-            
-        #r = optimize.minimize(self.logLikelyfood,theta,method='Powell',args=(y, x0))
+            r = optimize.minimize(self.logLikelyfood,theta,method="slsqp",args=args,bounds=[(x_min,x_max)] * (self.b.shape[1] + 1))
+        elif method == "Powell":
+            theta = np.random.random(self.b.shape[1] + 1) * 20
+            r = optimize.minimize(self.logLikelyfood,theta,method='Powell',args=args)
         
         if r.success == False:
             raise Exception('optimize failed')
@@ -147,19 +151,6 @@ class PyStateSpace:
         self.covariance_smooth[-1] = self.covariance_filter[-1]
         
         for idx in range(self.n_sample-2,-1,-1):
-            #print idx
-            #flag =  True    
-            #try:
-            #    self.covariance_predictor[idx].I
-            #except Exception as e:
-                #print e
-                #print idx
-            #    flag=False
-            #    continue
-            #if flag == False:
-            #    print "flag is false" 
-            #    continue
-            
             gain = self.covariance_filter[idx] * self.A.T * self.covariance_predictor[idx + 1].I
             self.state_smooth[idx] = self.state_filter[idx] + gain * ( self.state_smooth[idx+1] - self.state_predictor[idx+1] )
             self.covariance_smooth[idx] = self.covariance_filter[idx] + gain * ( self.covariance_smooth[idx+1] - self.covariance_predictor[idx+1] ) * gain.T
@@ -171,7 +162,8 @@ class PyStateSpace:
         
         if x0 == None:
             x0 = np.matrix(np.zeros((self.b.shape[0],1)))
-        
+            
+        parameters.append(self.mle(y, x0, method=mle_method))
         for i in range(repeat):
             try:
                 parameters.append(self.mle(y, x0, method=mle_method))
@@ -184,8 +176,13 @@ class PyStateSpace:
         theta = parameters[np.argmin(map(lambda x: x[1],parameters))][0]
         
         #n_cover = (self.b.shape[1] ** 2 - self.b.shape[1]) / 2
-        sigma_Q = np.matrix(np.diag(theta[:self.b.shape[1]]))#+squareform(theta[self.b.shape[1]:self.b.shape[1] + n_cover]))
-        sigma_w = np.matrix(theta[self.b.shape[1]:])
+        
+        if mle_method == 'Powell':
+            sigma_Q = np.matrix(np.diag(np.exp(theta[:self.b.shape[1]])))#+squareform(theta[self.b.shape[1]:self.b.shape[1] + n_cover]))
+            sigma_w = np.matrix(np.exp(theta[self.b.shape[1]:]))
+        else:
+            sigma_Q = np.matrix(np.diag(theta[:self.b.shape[1]]))
+            sigma_w = np.matrix(theta[self.b.shape[1]:])
         
         self.filter(y, sigma_Q, sigma_w, x0)
         return self.smooth()
@@ -213,9 +210,9 @@ if __name__ == "__main__":
     lag_acf = acf(sample,nlags=20)
     print "自己相関関数:{}".format(lag_acf)
 
-    model = getModel(1,6) #getModel(1,12)
+    model = getModel(1,6) 
     state_space = PyStateSpace(model)
-    state_smooth, _ = state_space.fit(sample,repeat=5)
+    state_smooth, _ = state_space.fit(sample,repeat=20,mle_method='Powell')
     sample_predict = state_space.forecast(100)
 
     state_smooth = np.array([ss[0,0] for ss in state_smooth])
@@ -223,8 +220,6 @@ if __name__ == "__main__":
 
     plt.plot(range(state_smooth.shape[0]),state_smooth)
     plt.plot(range(state_smooth.shape[0]),sample)
-    #c = np.matrix([[1.],[0],[0.],[0],[0],[0],[0],[0]])
-    #plt.plot(range(state_smooth.shape[0]),[x[0] for x in state_space.state_filter])
     plt.plot(range(state_smooth.shape[0],state_smooth.shape[0]+len(sample_predict)),sample_predict)
     plt.show()
 
