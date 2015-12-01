@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <math.h>
 #include <gsl/gsl_rng.h>
 #include <gsl/gsl_randist.h>
 #include <gsl/gsl_blas.h>
@@ -8,8 +9,34 @@
 #include <gsl/gsl_blas.h>
 #include <Python.h>
 
+
 #define dmalloc(size) debug_malloc(size,__FILE__,__LINE__)
 
+void* debug_malloc(const size_t size, const char *file,const int line){
+    void *r = malloc(size);
+    if (r == NULL) {
+        fprintf(stderr, "out of memory %s:%d", file, line);
+    }
+    return r;
+}
+
+void gsl_vector_print(gsl_vector *v){	
+	int i;
+	for(i=0;i<v->size;i++){
+		printf("%.10lf ",gsl_vector_get(v,i));
+	}
+	puts("");
+	
+}
+void gsl_matrix_print(gsl_matrix *m){	
+	int i,j;
+	for(i=0;i<m->size1;i++){
+		for(j=0;j<m->size2;j++){
+			printf("%.10lf ",gsl_matrix_get(m,i,j));
+		}
+		puts("");
+	}
+}
 gsl_vector *gsl_vector_clone(const gsl_vector *src){
 	gsl_vector *r=gsl_vector_alloc(src->size);
 	gsl_vector_memcpy(r,src);
@@ -54,22 +81,58 @@ typedef struct {
     gsl_vector *vector_l[1];
     gsl_vector *vector_k[1];
     
+    gsl_vector *y_clone;
+    
     gsl_matrix *tmp_matrix[5];
     gsl_vector *tmp_vector[2];
     gsl_matrix *gain;
     int state_dimention;
     int y_dimention;
+    int n_y;
+    gsl_vector **y;
+    gsl_matrix *A;
+    gsl_matrix *b;
+    gsl_matrix *c;
+    gsl_vector *x0;
+    
 }Kalman;
 
-void* debug_malloc(const size_t size, const char *file,const int line){
-    void *r = malloc(size);
-    if (r == NULL) {
-        fprintf(stderr, "out of memory %s:%d", file, line);
+
+gsl_vector *readArgVec(PyObject *arg){
+    int num,i;
+    gsl_vector *vec;
+    PyObject *row;
+    
+    if((num = PyList_Size(arg)) < 0) return NULL;
+    
+    vec = gsl_vector_alloc(num);
+    for (i=0; i<num; i++){
+        row = PyList_GetItem(arg, i);
+        double tmp=PyFloat_AsDouble(row);
+        gsl_vector_set(vec,i,tmp);
     }
-    return r;
+    return vec;
 }
 
-Kalman *kalmanInit(int n_y, int y_dimention, int state_dimention,int m){
+gsl_vector **readArgVecs(PyObject *arg){
+    int num[2],i;
+    gsl_vector **vecs;
+    PyObject *row;
+    
+    if((num[0] = PyList_Size(arg)) < 0) return NULL;
+    if((row = PyList_GetItem(arg, 0)) == NULL) return NULL;
+    if((num[1] = PyList_Size(row)) < 0) return NULL;
+    vecs = dmalloc(sizeof(gsl_vector *) * num[0]);
+    for (i=0; i<num[0]; i++){
+        row = PyList_GetItem(arg, i);
+        vecs[i] = readArgVec(row);
+    }
+    return vecs;
+}
+
+
+
+Kalman *kalmanInit(gsl_vector **y,int n_y, int y_dimention, int state_dimention,int m,gsl_matrix *A, gsl_matrix *b, gsl_matrix *c, gsl_vector *x0){
     Kalman *kalman = dmalloc(sizeof(Kalman));
     int i;
     
@@ -107,6 +170,13 @@ Kalman *kalmanInit(int n_y, int y_dimention, int state_dimention,int m){
     kalman->gain=gsl_matrix_alloc(state_dimention,y_dimention);
     kalman->state_dimention = state_dimention;
     kalman->y_dimention = y_dimention;
+    kalman->n_y = n_y;
+    kalman->y = y;
+    kalman->A = A;
+    kalman->b = b;
+    kalman->c = c;
+    kalman->x0 = x0;
+    kalman->y_clone = gsl_vector_alloc(y_dimention);
     return kalman;
 }
 
@@ -129,10 +199,11 @@ void kalmanFilteringStep(Kalman *kalman,gsl_vector *state_predictor, gsl_matrix 
     gsl_matrix *tmp = gsl_inverse(kalman->matrix_ll[0]);
     gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1.0, covariance_predictor, c, 0.0, kalman->matrix_kl[0]);
     gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1.0, kalman->matrix_kl[0], tmp, 0.0, kalman->gain);
+    gsl_matrix_free(tmp);
     gsl_blas_dgemv(CblasTrans , 1.0, c, state_predictor, 0.0, kalman->vector_l[0]);
-    gsl_vector *v =  gsl_vector_clone(each_y);
-    gsl_vector_sub(v, kalman->vector_l[0]);
-    gsl_blas_dgemv(CblasNoTrans, 1.0, kalman->gain, kalman->vector_l[0], 0.0, kalman->vector_k[0]);
+    gsl_vector_memcpy(kalman->y_clone,each_y);
+    gsl_vector_sub(kalman->y_clone, kalman->vector_l[0]);
+    gsl_blas_dgemv(CblasNoTrans, 1.0, kalman->gain, kalman->y_clone, 0.0, kalman->vector_k[0]);
     gsl_vector_memcpy(state_filter,state_predictor);
     gsl_vector_add(state_filter, kalman->vector_k[0]);
     gsl_blas_dgemm(CblasNoTrans, CblasTrans, 1.0, kalman->gain, c, 0.0, kalman->tmp_matrix[4]);
@@ -140,6 +211,7 @@ void kalmanFilteringStep(Kalman *kalman,gsl_vector *state_predictor, gsl_matrix 
     gsl_matrix_set_identity(tmp2);
     gsl_matrix_sub(tmp2,kalman->tmp_matrix[4]);
     gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1.0, tmp2, covariance_predictor, 0.0, covariance_filter);
+    gsl_matrix_free(tmp2);
 }
 
 void kalmanFilter(Kalman *kalman,gsl_vector **y, int n_y, gsl_matrix *A, gsl_matrix *b, gsl_matrix *c, gsl_matrix *sigma_Q, gsl_matrix *sigma_w, gsl_vector *x0){
@@ -153,37 +225,34 @@ void kalmanFilter(Kalman *kalman,gsl_vector **y, int n_y, gsl_matrix *A, gsl_mat
     gsl_blas_dgemm(CblasNoTrans, CblasTrans, 1.0, kalman->matrix_km[0], b, 0.0, constant_covariance);
     
     kalmanPredictionStep(kalman, x0, covariance_filter0, kalman->state_predictor[0], kalman->covariance_predictor[0], A, constant_covariance);
+    gsl_matrix_free(covariance_filter0);
     gsl_blas_dgemv(CblasTrans, 1.0, c, kalman->state_predictor[0], 0.0, kalman->y_forecast[0]);
     gsl_matrix *tmp=gsl_matrix_alloc(kalman->y_dimention,kalman->state_dimention);
     gsl_blas_dgemm(CblasTrans, CblasNoTrans, 1.0, c, kalman->covariance_predictor[0], 0.0, tmp);
     gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1.0, tmp, c, 0.0, kalman->cov_forecast[0]);
+    gsl_matrix_free(tmp);
     gsl_matrix_add(kalman->cov_forecast[0],sigma_w);
     kalmanFilteringStep(kalman, kalman->state_predictor[0], kalman->covariance_predictor[0], kalman->state_filter[0], kalman->covariance_filter[0], y[0], c, sigma_w);
     for(i=1;i < n_y;i++) {
         kalmanPredictionStep(kalman, kalman->state_filter[i-1], kalman->covariance_filter[i-1], kalman->state_predictor[i], kalman->covariance_predictor[i], A, constant_covariance);
-        printf("kalman->state_predictor[%d]:%lf\n",i,gsl_vector_get(kalman->state_predictor[i],0));
+        //printf("kalman->state_predictor[%d]:%lf\n",i,gsl_vector_get(kalman->state_predictor[i],0));
         gsl_blas_dgemv(CblasTrans, 1.0, c, kalman->state_predictor[i], 0.0, kalman->y_forecast[i]);
         gsl_blas_dgemm(CblasTrans, CblasNoTrans, 1.0, c, kalman->covariance_predictor[i], 0.0, kalman->matrix_lk[0]);
         gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1.0, kalman->matrix_lk[0], c, 0.0, kalman->cov_forecast[i]);
         gsl_matrix_add(kalman->cov_forecast[i],sigma_w);
         kalmanFilteringStep(kalman, kalman->state_predictor[i], kalman->covariance_predictor[i], kalman->state_filter[i], kalman->covariance_filter[i], y[i], c, sigma_w);
     }
+    gsl_matrix_free(constant_covariance);
     
 }
-static PyObject *kalmanFilterInitInterface(PyObject *self, PyObject *args){
-    int n_y, state_dimention, y_dimention, m;
-    
-    if (! PyArg_ParseTuple( args, "iiii", &n_y, &y_dimention, &state_dimention, &m)) return NULL;
-    Kalman *kalman = kalmanInit(n_y, y_dimention, state_dimention, m);
-    return Py_BuildValue("O", PyCapsule_New(kalman,NULL,NULL));
-}
+
 gsl_matrix *readArg(PyObject *arg){
     int num[2],i,j;
     gsl_matrix *mat;
     PyObject *row,*col;
     
     if((num[0] = PyList_Size(arg)) < 0) return NULL;
-    if((row = PyList_GetItem(arg, 0))==NULL) return NULL;
+    if((row = PyList_GetItem(arg, 0)) == NULL) return NULL;
     if((num[1] = PyList_Size(row)) < 0) return NULL;
     mat = gsl_matrix_alloc(num[0],num[1]);
     for (i=0; i<num[0]; i++){
@@ -197,42 +266,12 @@ gsl_matrix *readArg(PyObject *arg){
     return mat;
 }
 
-gsl_vector *readArgVec(PyObject *arg){
-    int num,i;
-    gsl_vector *vec;
-    PyObject *row;
-    
-    if((num = PyList_Size(arg)) < 0) return NULL;
-    
-    vec = gsl_vector_alloc(num);
-    for (i=0; i<num; i++){
-        row = PyList_GetItem(arg, i);
-        double tmp=PyFloat_AsDouble(row);
-        gsl_vector_set(vec,i,tmp);
-    }
-    return vec;
-}
 
-gsl_vector **readArgVecs(PyObject *arg){
-    int num[2],i;
-    gsl_vector **vecs;
-    PyObject *row;
-    
-    if((num[0] = PyList_Size(arg)) < 0) return NULL;
-    if((row = PyList_GetItem(arg, 0))==NULL) return NULL;
-    if((num[1] = PyList_Size(row)) < 0) return NULL;
-    vecs = dmalloc(sizeof(gsl_vector *) * num[0]);
-    for (i=0; i<num[0]; i++){
-        row = PyList_GetItem(arg, i);
-        vecs[i] = readArgVec(row);
-    }
-    return vecs;
-}
 
 
 PyListObject *convertPyObjectFromMatries(gsl_matrix **mats,int n){
     int i,j,k;
-    puts("f1");
+    //puts("f1");
     PyListObject *list = (PyListObject *) PyList_New(n);
     for(i=0; i < n; i++){
         PyListObject *list2 = (PyListObject *) PyList_New(mats[i]->size1);
@@ -259,44 +298,81 @@ PyListObject *convertPyObjectFromVectors(gsl_vector **vecs,int n){
     }
     return list;
 }
-static PyObject *kalmanFilterInterface(PyObject *self, PyObject *args){
-    Kalman *kalman;
-    PyObject *arg_kalman,*arg_A, *arg_b, *arg_c, *arg_sigma_Q, *arg_sigma_w, *vecY, *arg_x0;
-    gsl_matrix *A,*b,*c, *sigma_Q, *sigma_w;
-    gsl_vector **y,*x0;
-    int n_y;
+double loglikelihood(int n_y,gsl_vector **y,gsl_vector **y_forecast,gsl_matrix **cov_forecast){
+    int i;
+    double r=0.0,pipi=2*M_PI;
     
-    if (! PyArg_ParseTuple( args, "OOOOOOOO", &arg_kalman, &vecY, &arg_A, &arg_b, &arg_c, &arg_sigma_Q, &arg_sigma_w, &arg_x0)) return NULL;
-    puts("a");
-    kalman=PyCapsule_GetPointer(arg_kalman,NULL);
+    
+    for(i=0;i<n_y;i++){
+        double sigma = gsl_matrix_get(cov_forecast[i],0,0);
+        double sample = gsl_vector_get(y[i],0);
+        double estimate_sample = gsl_vector_get(y_forecast[i],0);
+        r += log(1.0/sqrt(pipi*sigma)) - 0.5 * (sample - estimate_sample) * (sample - estimate_sample) / sigma;
+    }
+    return r;
+}
+
+static PyObject *kalmanFilterInitInterface(PyObject *self, PyObject *args){
+    int n_y, state_dimention, y_dimention, m;
+    PyObject *vecY, *arg_A, *arg_b, *arg_c, *arg_x0;
+    gsl_vector **y,*x0;
+    gsl_matrix *A,*b,*c;
+    
+    if (! PyArg_ParseTuple( args, "OOOOOiii", &vecY, &arg_A, &arg_b, &arg_c, &arg_x0, &y_dimention, &state_dimention, &m)) return NULL;
     
     if((n_y = PyList_Size(vecY)) < 0) return NULL;
-    puts("b");
     y = readArgVecs(vecY);
+    
     A = readArg(arg_A);
     b = readArg(arg_b);
     c = readArg(arg_c);
-    puts("c");
+    x0 = readArgVec(arg_x0);
+    
+    Kalman *kalman = kalmanInit(y, n_y, y_dimention, state_dimention, m, A, b, c, x0);
+    return Py_BuildValue("O", PyCapsule_New(kalman,NULL,NULL));
+}
+
+static PyObject *kalmanFilterInterface(PyObject *self, PyObject *args){
+    Kalman *kalman;
+    PyObject *arg_kalman,*arg_sigma_Q, *arg_sigma_w;
+    gsl_matrix *sigma_Q, *sigma_w;
+    
+    if (! PyArg_ParseTuple( args, "OOO", &arg_kalman, &arg_sigma_Q, &arg_sigma_w)) return NULL;
+    kalman=PyCapsule_GetPointer(arg_kalman,NULL);
+    
+    /*A = readArg(arg_A);
+    b = readArg(arg_b);
+    c = readArg(arg_c);
+    x0 = readArgVec(arg_x0);
+    */
     sigma_Q = readArg(arg_sigma_Q);
     sigma_w = readArg(arg_sigma_w);
-    x0 = readArgVec(arg_x0);
-    puts("d");
-    kalmanFilter(kalman,y,n_y,A,b,c,sigma_Q,sigma_w,x0);
-    puts("e");
-    PyListObject *list = (PyListObject *) PyList_New(6);
-    PyList_SET_ITEM(list,0,Py_BuildValue("O",convertPyObjectFromVectors(kalman->state_predictor, n_y)));
-    puts("f");
-    PyList_SET_ITEM(list,1,Py_BuildValue("O",convertPyObjectFromMatries(kalman->covariance_predictor, n_y)));
-    puts("g");
-    PyList_SET_ITEM(list,2,Py_BuildValue("O",convertPyObjectFromVectors(kalman->state_filter, n_y)));
-    puts("h");
-    PyList_SET_ITEM(list,3,Py_BuildValue("O",convertPyObjectFromMatries(kalman->covariance_filter, n_y)));
-    puts("i");
-    PyList_SET_ITEM(list,4,Py_BuildValue("O",convertPyObjectFromVectors(kalman->y_forecast, n_y)));
-    puts("j");
-    PyList_SET_ITEM(list,5,Py_BuildValue("O",convertPyObjectFromMatries(kalman->cov_forecast, n_y)));
-    puts("k");
-    return Py_BuildValue("O", list);
+    
+    
+    kalmanFilter(kalman,kalman->y,kalman->n_y,kalman->A,kalman->b,kalman->c,sigma_Q,sigma_w,kalman->x0);
+    
+    // memory leak
+    /*PyListObject *list = (PyListObject *) PyList_New(2);
+    PyList_SET_ITEM(list,0,Py_BuildValue("O",convertPyObjectFromVectors(kalman->state_predictor, kalman->n_y)));
+    PyList_SET_ITEM(list,1,Py_BuildValue("O",convertPyObjectFromMatries(kalman->covariance_predictor, kalman->n_y)));
+    PyList_SET_ITEM(list,2,Py_BuildValue("O",convertPyObjectFromVectors(kalman->state_filter, kalman->n_y)));
+    PyList_SET_ITEM(list,3,Py_BuildValue("O",convertPyObjectFromMatries(kalman->covariance_filter, kalman->n_y)));
+    PyList_SET_ITEM(list,0,Py_BuildValue("O",convertPyObjectFromVectors(kalman->y_forecast, kalman->n_y)));
+    PyList_SET_ITEM(list,1,Py_BuildValue("O",convertPyObjectFromMatries(kalman->cov_forecast, kalman->n_y)));*/
+    /*for(i=0;i<n_y;i++){
+        gsl_vector_free(y[i]);
+    }
+    free(y);*/
+    /*gsl_matrix_free(A);
+    gsl_matrix_free(b);
+    gsl_matrix_free(c);
+    gsl_vector_free(x0);*/
+    gsl_matrix_free(sigma_Q);
+    gsl_matrix_free(sigma_w);
+    
+    double r = loglikelihood(kalman->n_y,kalman->y,kalman->y_forecast,kalman->cov_forecast);
+    return Py_BuildValue("f", r);
+    //return Py_BuildValue("O", list);
 }
 static PyMethodDef kalmanmethods[] = {
     {"filter", kalmanFilterInterface, METH_VARARGS},
