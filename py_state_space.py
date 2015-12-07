@@ -41,6 +41,30 @@ def getModel2(trend=1,period=7,ar=3):
     c[2,1] = 1
     return {'A':A,'b':b,'c':c}
 
+def metropolis(fun,theta,args,maxiter=10000,step_size=1e-7):
+    step_size=100
+    n_params = theta.shape[0]
+    userfun_cur = -fun(theta, *args)
+    for iter_cur in range(maxiter):
+        for i in range(n_params):
+            theta_can = theta
+            
+            tmp = np.random.randn() * step_size
+            while theta_can[i] + tmp < 0.0:
+                tmp = np.random.randn() * step_size
+            theta_can[i] += tmp
+            userfun_can = -fun(theta_can, *args)
+            ratio = np.exp(userfun_can - userfun_cur);
+            print "ratio:{}".format(ratio)
+            if np.random.random() < ratio:
+                theta = theta_can
+                userfun_cur = userfun_can
+        if iter_cur % 100 == 0:
+            print iter_cur
+        if iter_cur > 3000:
+            step_size=10
+    return theta
+    
 u""" 状態空間モデルを解析 """
         
 class PyStateSpace:
@@ -128,7 +152,7 @@ class PyStateSpace:
             sigma_Q = np.matrix(np.diag(theta[:self.b.shape[1]]))
             sigma_w = np.matrix(theta[self.b.shape[1]:])
 
-        a=np.sqrt(np.exp(theta[self.b.shape[1]:self.b.shape[1] + y[0].shape[0]]))
+        """a=np.sqrt(np.exp(theta[self.b.shape[1]:self.b.shape[1] + y[0].shape[0]]))
         b=theta[offset1:offset1 + n_cover2]
         for i in range(n_cover2):
             parent = int(i / (y[0].shape[0]-1))
@@ -136,10 +160,10 @@ class PyStateSpace:
             if abs(b[i]) > a[parent]*a[child]:
                 print "fail"
                 #sys.exit(1)
-        #b=theta[offset1:offset1 + n_cover2]
+        #b=theta[offset1:offset1 + n_cover2]"""
         
         
-        if False:
+        if True:
             #y_forecast, cov_forecast = kalman.filter(context,self.A.tolist(),self.b.tolist(),self.c.tolist(),sigma_Q.tolist(),sigma_w.tolist(),x0)
             #y_forecast = np.array([float(yf[0]) for yf in y_forecast])
             #cov_forecast = np.array([cf[0] for cf in cov_forecast])
@@ -217,7 +241,10 @@ class PyStateSpace:
         elif method == "Powell":
             theta = np.random.random(self.b.shape[1] + y[0].shape[0] + n_cover2) * 20
             r = optimize.minimize(self.logLikelyfood,theta,method='Powell',args=args)
-        
+        else:
+            theta = np.random.random(self.b.shape[1] + y[0].shape[0] + n_cover2) * 20
+            print metropolis(self.logLikelyfood,theta,args)
+            sys.exit(1)
         if r.success == False:
             raise Exception('optimize failed')
         return (r.x,r.fun)
@@ -240,7 +267,7 @@ class PyStateSpace:
         
         if x0 == None:
             x0 = np.matrix(np.zeros((self.b.shape[0],1)))
-
+        parameters.append(self.mle(y, x0, method=mle_method))
         for i in range(repeat):
             try:
                 parameters.append(self.mle(y, x0, method=mle_method))
@@ -292,7 +319,7 @@ if __name__ == "__main__":
     #plt.show()
     #sys.exit(1)
 
-    sample = np.array([np.matrix([x[1],x[2]]).T for x in sample])
+    sample = np.array([np.matrix([x[1]]).T for x in sample])
     
     """
     sigma = np.matrix([[ 63807496.25393277,  63521784.61916471],[ 63521784.61916471,  61273850.59439901]])
@@ -314,9 +341,9 @@ if __name__ == "__main__":
     lag_acf = acf(sample,nlags=20)
     print "自己相関関数:{}".format(lag_acf)"""
 
-    model = getModel2(1,12)
+    model = getModel(1,12)
     state_space = PyStateSpace(model)
-    state_smooth, _ = state_space.fit(sample,repeat=8,mle_method='Powell')
+    state_smooth, _ = state_space.fit(sample,repeat=8,mle_method='mcmc')
     sample_predict = state_space.forecast(100)
     state_smooth = np.array([ss[0,0] for ss in state_smooth])
     sample_predict = np.array([sp[0,0] for sp in sample_predict])
