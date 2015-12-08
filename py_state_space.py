@@ -225,7 +225,7 @@ class PyStateSpace:
             #r = np.sum(np.log(1. / np.sqrt(2. * math.pi * cov_forecast)) - (y - y_forecast)  ** 2 / (2 * cov_forecast))
             #r = np.sum(np.log(1. / (np.sqrt(2. * math.pi) ** y_dimention * np.sqrt(numpy.linalg.det(cov_forecast)) ) ) - 0.5 * (y - y_forecast).T * cov_forecast.I * (y - y_forecast))
             r = r[0,0]
-        #print "theta:{} loglike:{}".format(theta,r)
+        print "theta:{} loglike:{}".format(theta,r)
         if r != r:
             print sigma_Q
             print sigma_w
@@ -293,7 +293,7 @@ class PyStateSpace:
         
         if x0 == None:
             x0 = np.matrix(np.zeros((self.b.shape[0],1)))
-        parameters.append(self.mle(y, x0, method=mle_method))
+
         for i in range(repeat):
             try:
                 parameters.append(self.mle(y, x0, method=mle_method))
@@ -309,16 +309,16 @@ class PyStateSpace:
         #n_cover = (self.b.shape[1] ** 2 - self.b.shape[1]) / 2
         
         if mle_method == 'Powell' or mle_method == 'differential_evolution':
-            sigma_Q = np.matrix(np.diag(np.exp(theta[:self.b.shape[1]])))#+squareform(theta[self.b.shape[1]:self.b.shape[1] + n_cover]))
+            self.sigma_Q = np.matrix(np.diag(np.exp(theta[:self.b.shape[1]])))#+squareform(theta[self.b.shape[1]:self.b.shape[1] + n_cover]))
             offset1 = self.b.shape[1] + y[0].shape[0]
             n_cover2 = (y[0].shape[0] ** 2 - y[0].shape[0]) / 2
-            sigma_w = np.matrix(np.diag(np.exp(theta[self.b.shape[1]:self.b.shape[1] + y[0].shape[0]])))+squareform(theta[offset1:offset1 + n_cover2])
+            self.sigma_w = np.matrix(np.diag(np.exp(theta[self.b.shape[1]:self.b.shape[1] + y[0].shape[0]])))+squareform(theta[offset1:offset1 + n_cover2])
             #sigma_w = np.matrix(np.exp(theta[self.b.shape[1]:]))
         else:
-            sigma_Q = np.matrix(np.diag(theta[:self.b.shape[1]]))
-            sigma_w = np.matrix(theta[self.b.shape[1]:])
+            self.sigma_Q = np.matrix(np.diag(theta[:self.b.shape[1]]))
+            self.sigma_w = np.matrix(theta[self.b.shape[1]:])
         
-        self.filter(y, sigma_Q, sigma_w, x0)
+        self.filter(y, self.sigma_Q, self.sigma_w, x0)
         return self.smooth()
     
     def forecast(self, n_ahead):
@@ -326,7 +326,7 @@ class PyStateSpace:
         state = self.state_predictor[-1]
         for i in range(n_ahead):
             state = self.A * state
-            y_forecast.append(self.c.T * state)
+            y_forecast.append(self.c.T * state + np.random.randn() * np.sqrt(self.sigma_w[0,0]))
             
         return y_forecast[1:]
 
@@ -369,7 +369,7 @@ if __name__ == "__main__":
 
     model = getModel(1,12)
     state_space = PyStateSpace(model)
-    state_smooth, _ = state_space.fit(sample,repeat=5,mle_method='Powell')
+    state_smooth, _ = state_space.fit(sample,repeat=8,mle_method='Powell')
     sample_predict = state_space.forecast(100)
     state_smooth = np.array([ss[0,0] for ss in state_smooth])
     sample_predict = np.array([sp[0,0] for sp in sample_predict])
