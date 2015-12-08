@@ -10,6 +10,7 @@
 #include <gsl/gsl_errno.h>
 #include <Python.h>
 
+typedef double KalmanReal;
 
 #define dmalloc(size) debug_malloc(size,__FILE__,__LINE__)
 

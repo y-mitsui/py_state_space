@@ -326,7 +326,8 @@ class PyStateSpace:
         state = self.state_predictor[-1]
         for i in range(n_ahead):
             state = self.A * state
-            y_forecast.append(self.c.T * state + np.random.randn() * np.sqrt(self.sigma_w[0,0]))
+            #y_forecast.append(self.c.T * state + np.random.randn() * np.sqrt(self.sigma_w[0,0]))
+            y_forecast.append(self.c.T * state)
             
         return y_forecast[1:]
 
@@ -367,9 +368,9 @@ if __name__ == "__main__":
     lag_acf = acf(sample,nlags=20)
     print "自己相関関数:{}".format(lag_acf)"""
 
-    model = getModel(1,12)
+    model = getModel(1,301)
     state_space = PyStateSpace(model)
-    state_smooth, _ = state_space.fit(sample,repeat=8,mle_method='Powell')
+    state_smooth, _ = state_space.fit(sample,repeat=1,mle_method='Powell')
     sample_predict = state_space.forecast(100)
     state_smooth = np.array([ss[0,0] for ss in state_smooth])
     sample_predict = np.array([sp[0,0] for sp in sample_predict])
