@@ -41,13 +41,13 @@ def getModel2(trend=1,period=7,ar=3):
     c[2,1] = 1
     return {'A':A,'b':b,'c':c}
 
-def metropolis(fun,theta,args,maxiter=10000,step_size=1e-7):
-    step_size=100
+def metropolis(fun,theta,args,maxiter=40000,step_size=1e-7):
+    step_size=200
     n_params = theta.shape[0]
     userfun_cur = -fun(theta, *args)
     for iter_cur in range(maxiter):
         for i in range(n_params):
-            theta_can = theta
+            theta_can = list(theta)
             
             tmp = np.random.randn() * step_size
             while theta_can[i] + tmp < 0.0:
@@ -55,15 +55,41 @@ def metropolis(fun,theta,args,maxiter=10000,step_size=1e-7):
             theta_can[i] += tmp
             userfun_can = -fun(theta_can, *args)
             ratio = np.exp(userfun_can - userfun_cur);
-            print "ratio:{}".format(ratio)
+            #print "ratio:{}".format(ratio)
             if np.random.random() < ratio:
                 theta = theta_can
                 userfun_cur = userfun_can
         if iter_cur % 100 == 0:
             print iter_cur
+            print "theta2:{} logLikelyfood:{}".format(theta,userfun_cur)
+
+    return (theta,-userfun_cur)
+
+def metropolis2(fun,theta,args,maxiter=30000,step_size=1e-7):
+    step_size=1
+    n_params = theta.shape[0]
+    userfun_cur = -fun(theta, *args)
+    for iter_cur in range(maxiter):
+        theta_can = theta
+        tmp = np.random.randn(n_params) * step_size
+        while any(theta_can + tmp < 0.0 ):
+            tmp = np.random.randn(n_params) * step_size
+
+        theta_can += tmp
+        userfun_can = -fun(theta_can, *args)
+        ratio = np.exp(userfun_can - userfun_cur);
+        if np.random.random() < ratio:
+            theta = theta_can
+            userfun_cur = userfun_can
+
+        if iter_cur % 100 == 0:
+            print iter_cur
+            print "theta:{} logLikelyfood:{}".format(theta,userfun_cur)
+            print "like2:%.15f"%(userfun_cur)
         if iter_cur > 3000:
-            step_size=10
+            step_size=0.1
     return theta
+
     
 u""" 状態空間モデルを解析 """
         
@@ -199,7 +225,7 @@ class PyStateSpace:
             #r = np.sum(np.log(1. / np.sqrt(2. * math.pi * cov_forecast)) - (y - y_forecast)  ** 2 / (2 * cov_forecast))
             #r = np.sum(np.log(1. / (np.sqrt(2. * math.pi) ** y_dimention * np.sqrt(numpy.linalg.det(cov_forecast)) ) ) - 0.5 * (y - y_forecast).T * cov_forecast.I * (y - y_forecast))
             r = r[0,0]
-        print "theta:{} loglike:{}".format(theta,r)
+        #print "theta:{} loglike:{}".format(theta,r)
         if r != r:
             print sigma_Q
             print sigma_w
@@ -243,7 +269,7 @@ class PyStateSpace:
             r = optimize.minimize(self.logLikelyfood,theta,method='Powell',args=args)
         else:
             theta = np.random.random(self.b.shape[1] + y[0].shape[0] + n_cover2) * 20
-            print metropolis(self.logLikelyfood,theta,args)
+            return metropolis(self.logLikelyfood,theta,args)
             sys.exit(1)
         if r.success == False:
             raise Exception('optimize failed')
@@ -343,7 +369,7 @@ if __name__ == "__main__":
 
     model = getModel(1,12)
     state_space = PyStateSpace(model)
-    state_smooth, _ = state_space.fit(sample,repeat=8,mle_method='mcmc')
+    state_smooth, _ = state_space.fit(sample,repeat=5,mle_method='Powell')
     sample_predict = state_space.forecast(100)
     state_smooth = np.array([ss[0,0] for ss in state_smooth])
     sample_predict = np.array([sp[0,0] for sp in sample_predict])

@@ -71,6 +71,15 @@ gsl_matrix *gsl_inverse(gsl_matrix *m){
 	return r;
 }
 
+int gsl_inverse_cholesky(gsl_matrix *src,gsl_matrix *dist){
+	gsl_matrix_memcpy(dist,src);
+	int r = gsl_linalg_cholesky_decomp(dist);
+	if( r == GSL_SUCCESS){
+		gsl_linalg_cholesky_invert(dist);
+	}
+	return r;
+}
+
 typedef struct {
     gsl_vector **state_filter, **state_predictor;
     gsl_matrix **covariance_filter, **covariance_predictor;
@@ -341,11 +350,13 @@ double loglikelihood(int n_y,gsl_vector **y,gsl_vector **y_forecast,gsl_matrix *
     double r=0.0,pipi=2*M_PI,subr;
     
     gsl_vector *diffX = gsl_vector_alloc(y[0]->size);
-    gsl_vector *tmp = gsl_vector_alloc(y[0]->size);
+	gsl_vector *tmp = gsl_vector_alloc(y[0]->size);
+	gsl_matrix *covI = gsl_matrix_alloc(cov_forecast[0]->size1,cov_forecast[0]->size2);
     for(i=0;i<n_y;i++){
         gsl_vector_memcpy(diffX,y[i]);
-        gsl_vector_sub(diffX,y_forecast[i]);
-        gsl_matrix *covI = gsl_inverse(cov_forecast[i]);
+		gsl_vector_sub(diffX,y_forecast[i]);
+		gsl_inverse_cholesky(cov_forecast[i],covI);
+        //gsl_matrix *covI = gsl_inverse(cov_forecast[i]);
         
         gsl_blas_dgemv (CblasTrans, 1.0, covI, diffX,0.0,tmp);
     	gsl_blas_ddot (tmp, diffX,&subr);
@@ -405,7 +416,8 @@ static PyObject *kalmanFilterInterface(PyObject *self, PyObject *args){
     gsl_matrix_free(sigma_Q);
     gsl_matrix_free(sigma_w);
     
-    double r = loglikelihood(kalman->n_y,kalman->y,kalman->y_forecast,kalman->cov_forecast);
+    double r = loglikelihood2(kalman->n_y,kalman->y,kalman->y_forecast,kalman->cov_forecast);
+    //printf("r:%lf\n",r);
     return Py_BuildValue("f", r);
     //return Py_BuildValue("O", list);
 }
