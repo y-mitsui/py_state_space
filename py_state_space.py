@@ -14,17 +14,37 @@ import copy
 import kalman
 
 def getModel(trend=1,period=7,ar=3):
-    A = np.matrix(np.zeros((period+1,period+1)))
-    A[2,2:] = np.ones(period - 1) * -1
-    A[3:,2:-1] = np.diag(np.ones(period-2))
+    A = np.matrix(np.zeros((period+ar+1,period+ar+1)))
+    #priod
+    A[2,2:2+period - 1] = np.ones(period - 1) * -1
+    A[3:3+period - 2,2:2+period - 2] = np.diag(np.ones(period-2))
+    #ar
+    if ar > 0:
+        offset = 3+period - 2
+        offset2 = 2+period - 1
+        A[offset,offset2:] = np.ones(ar) * -1
+        A[offset+1:,offset2:-1] = np.diag(np.ones(ar-1))
+    
+    #trend
     A[0:2,0:2] = np.matrix([[2,-1],[1,0]])
-    b = np.matrix(np.zeros((period-1+2,2)))
+    
+   
+    b = np.matrix(np.zeros((period-1+ar+2,3)))
     b[0,0] = 1
     b[2,1] = 1
-    c = np.matrix(np.zeros((period-1+2,1)))
+    if ar > 0:
+        b[2+period-1,2] = 1
+    c = np.matrix(np.zeros((period-1+ar+2,1)))
     c[0,0] = 1
     c[2,0] = 1
-    return {'A':A,'b':b,'c':c}
+
+    if ar > 0:
+        c[2+period-1,0] = 1
+    print A
+    print b
+    print c
+    sys.exit(1)
+    return {'A':A,'b':b,'c':c,'period':period,'ar':ar}
 
 def getModel2(trend=1,period=7,ar=3):
     A = np.matrix(np.zeros((period+1,period+1)))
@@ -39,7 +59,7 @@ def getModel2(trend=1,period=7,ar=3):
     c[2,0] = 1
     c[0,1] = 1
     c[2,1] = 1
-    return {'A':A,'b':b,'c':c}
+    return {'A':A,'b':b,'c':c,'period':period,'ar':ar}
 
 def metropolis(fun,theta,args,maxiter=40000,step_size=1e-7):
     step_size=200
@@ -116,6 +136,7 @@ class PyStateSpace:
         self.b = model['b']
         self.c = model['c']
         self.sigma = sigma
+        self.model = model
     def filter(self, y, sigma_Q, sigma_w ,x0,gamma=100):
         u""" [CLASSES] カルマンフィルタによる状態平均ベクトル・分散共分散の推定
         Return value:
@@ -174,6 +195,12 @@ class PyStateSpace:
             sigma_Q = np.matrix(np.diag(np.exp(theta[:self.b.shape[1]])))#+squareform(theta[self.b.shape[1]:self.b.shape[1] + n_cover]))
             offset1 = self.b.shape[1] + y[0].shape[0]
             sigma_w = np.matrix(np.diag(np.exp(theta[self.b.shape[1]:self.b.shape[1] + y[0].shape[0]])))+squareform(theta[offset1:offset1 + n_cover2])
+            offset1 += n_cover2
+
+            offset = 3+self.model['period'] - 2
+            offset2 = 2+self.model['period'] - 1
+            if self.model['ar'] > 0:
+                self.A[offset,offset2:] = np.ones(self.model['ar']) * theta[offset1:]
         else:
             sigma_Q = np.matrix(np.diag(theta[:self.b.shape[1]]))
             sigma_w = np.matrix(theta[self.b.shape[1]:])
@@ -232,7 +259,7 @@ class PyStateSpace:
             print np.linalg.det(sigma_Q)
             print np.linalg.det(sigma_w)
             #return 1e+100
-            sys.exit(1)
+            #sys.exit(1)
             print "r_log:{}".format(r_log)
             print "cov_forecast:{}".format(cov_forecast)
             print "y_forecast:{}".format(y_forecast)
@@ -247,6 +274,7 @@ class PyStateSpace:
         context = kalman.init(arg_y,self.A.tolist(),self.b.tolist(),self.c.tolist(), arg_x0, y[0].shape[0],x0.shape[0], self.b.shape[1])
         n_cover = (self.b.shape[1] ** 2 - self.b.shape[1]) / 2
         n_cover2 = (y[0].shape[0] ** 2 - y[0].shape[0]) / 2
+
         x_min=1e-6
         x_max=2e+8
         
@@ -260,13 +288,13 @@ class PyStateSpace:
             n_cover2 = 0
             bounds1 = [(x_min,x_max)] * (self.b.shape[1] + y[0].shape[0])
             bounds2 = [(-1e+7,1e+7)] * n_cover2 
-            r = optimize.differential_evolution(self.logLikelyfood, args=args,bounds=bounds1 + bounds2,popsize=150,mutation=0.25,recombination=0.25)
+            r = optimize.differential_evolution(self.logLikelyfood, args=args,bounds=bounds1 + bounds2,popsize=150,mutation=0.25,recombination=0.25,tol=0.001)
         elif method == "slsqp":
             theta = np.random.random(self.b.shape[1] + 1) * x_max
             r = optimize.minimize(self.logLikelyfood,theta,method="slsqp",args=args,bounds=[(x_min,x_max)] * (self.b.shape[1] + 1))
         elif method == "Powell":
-            theta = np.random.random(self.b.shape[1] + y[0].shape[0] + n_cover2) * 20
-            r = optimize.minimize(self.logLikelyfood,theta,method='Powell',args=args)
+            theta = np.random.random(self.b.shape[1] + y[0].shape[0] + n_cover2 + self.model['ar']) * 20
+            r = optimize.minimize(self.logLikelyfood,theta,method='Powell',args=args,options={'xtol': 0.0000001, 'ftol': 0.0000001})
         else:
             theta = np.random.random(self.b.shape[1] + y[0].shape[0] + n_cover2) * 20
             return metropolis(self.logLikelyfood,theta,args)
@@ -293,7 +321,7 @@ class PyStateSpace:
         
         if x0 == None:
             x0 = np.matrix(np.zeros((self.b.shape[0],1)))
-
+        parameters.append(self.mle(y, x0, method=mle_method))
         for i in range(repeat):
             try:
                 parameters.append(self.mle(y, x0, method=mle_method))
@@ -313,6 +341,14 @@ class PyStateSpace:
             offset1 = self.b.shape[1] + y[0].shape[0]
             n_cover2 = (y[0].shape[0] ** 2 - y[0].shape[0]) / 2
             self.sigma_w = np.matrix(np.diag(np.exp(theta[self.b.shape[1]:self.b.shape[1] + y[0].shape[0]])))+squareform(theta[offset1:offset1 + n_cover2])
+            
+            if self.model['ar'] > 0:
+                offset = 3+self.model['period'] - 2
+                offset2 = 2+self.model['period'] - 1
+                self.A[offset,offset2:] = np.ones(self.model['ar']) * theta[offset1:]
+            print self.sigma_Q
+            print self.sigma_w
+            print self.A
             #sigma_w = np.matrix(np.exp(theta[self.b.shape[1]:]))
         else:
             self.sigma_Q = np.matrix(np.diag(theta[:self.b.shape[1]]))
@@ -324,9 +360,11 @@ class PyStateSpace:
     def forecast(self, n_ahead):
         y_forecast = []
         state = self.state_predictor[-1]
+        print self.sigma_w
         for i in range(n_ahead):
             state = self.A * state
-            #y_forecast.append(self.c.T * state + np.random.randn() * np.sqrt(self.sigma_w[0,0]))
+            sigma = np.sqrt(self.sigma_w[0,0]) if self.sigma_w[0,0] >= 1.0 else self.sigma_w[0,0]/1.5
+            #y_forecast.append(self.c.T * state + np.random.randn() * sigma)
             y_forecast.append(self.c.T * state)
             
         return y_forecast[1:]
@@ -346,7 +384,7 @@ if __name__ == "__main__":
     #plt.show()
     #sys.exit(1)
 
-    sample = np.array([np.matrix([x[1]]).T for x in sample])
+    sample = (np.array([np.matrix([x[1]]).T for x in sample]))
     
     """
     sigma = np.matrix([[ 63807496.25393277,  63521784.61916471],[ 63521784.61916471,  61273850.59439901]])
@@ -368,16 +406,16 @@ if __name__ == "__main__":
     lag_acf = acf(sample,nlags=20)
     print "自己相関関数:{}".format(lag_acf)"""
 
-    model = getModel(1,301)
+    model = getModel(1,6,ar=2)
     state_space = PyStateSpace(model)
-    state_smooth, _ = state_space.fit(sample,repeat=1,mle_method='Powell')
-    sample_predict = state_space.forecast(100)
+    state_smooth, _ = state_space.fit(sample,repeat=8,mle_method='Powell')
+    sample_predict = state_space.forecast(2)
     state_smooth = np.array([ss[0,0] for ss in state_smooth])
     sample_predict = np.array([sp[0,0] for sp in sample_predict])
 
-    plt.plot(range(state_smooth.shape[0]),state_smooth)
-    plt.plot(range(state_smooth.shape[0]),[x[0,0] for x in sample])
-    plt.plot(range(state_smooth.shape[0],state_smooth.shape[0]+len(sample_predict)),sample_predict)
+    plt.plot(range(state_smooth.shape[0]),(state_smooth))
+    plt.plot(range(state_smooth.shape[0]),([x[0,0] for x in sample]))
+    plt.plot(range(state_smooth.shape[0],state_smooth.shape[0]+len(sample_predict)),(sample_predict))
     plt.show()
 
 
