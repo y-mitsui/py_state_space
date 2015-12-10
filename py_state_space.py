@@ -12,39 +12,68 @@ import sys
 from statsmodels.tsa.stattools import acf
 import copy
 import kalman
+from statsmodels.tsa import ar_model
 
-def getModel(trend=1,period=7,ar=3):
-    A = np.matrix(np.zeros((period+ar+1,period+ar+1)))
-    #priod
-    A[2,2:2+period - 1] = np.ones(period - 1) * -1
-    A[3:3+period - 2,2:2+period - 2] = np.diag(np.ones(period-2))
-    #ar
-    if ar > 0:
-        offset = 3+period - 2
-        offset2 = 2+period - 1
-        A[offset,offset2:] = np.ones(ar) * -1
-        A[offset+1:,offset2:-1] = np.diag(np.ones(ar-1))
+def getModelAR(ar_coef):
+    ar_rank = ar_coef.shape[0]
+    
+    A = np.matrix(np.zeros((ar_rank,ar_rank)))
+    A[0,:] = np.ones(ar_rank) * ar_coef
+    A[1:,:-1] = np.diag(np.ones(ar_rank-1))
+   
+    b = np.matrix(np.zeros((ar_rank,1)))
+    b[0,0] = 1
+    
+    c = np.matrix(np.zeros((ar_rank,1)))
+    c[0,0] = 1
+
+    return {'A':A,'b':b,'c':c}
+    
+def getModel(trend=1, period=7, ar_coef=[]):
+    ar_rank = ar_coef.shape[0] if ar_coef != [] else 0
+    period_rank = period - 1 if  period > 0 else 0
+    
+    A = np.matrix(np.zeros((period_rank + ar_rank + 2,period_rank + ar_rank + 2)))
     
     #trend
     A[0:2,0:2] = np.matrix([[2,-1],[1,0]])
     
-   
-    b = np.matrix(np.zeros((period-1+ar+2,3)))
+    #priod
+    if period_rank > 0:
+        A[2,2:2 + period_rank] = np.ones(period_rank) * -1
+        A[3:3 + period_rank - 1,2:2 + period_rank - 1] = np.diag(np.ones(period_rank - 1))
+    #ar
+    if ar_coef != [] :
+        offsetRow = 2 + period_rank
+        offsetCal = 2 + period_rank
+        A[offsetRow,offsetCal:] = ar_coef
+        A[offsetRow + 1:,offsetCal:-1] = np.diag(np.ones(ar_rank - 1))
+    
+    
+    
+    b_rank = 1
+    if ar_rank > 0:
+        b_rank += 1
+    if period_rank > 0:
+        b_rank += 1
+        
+    b = np.matrix(np.zeros((period_rank + ar_rank + 2, b_rank)))
     b[0,0] = 1
-    b[2,1] = 1
-    if ar > 0:
-        b[2+period-1,2] = 1
-    c = np.matrix(np.zeros((period-1+ar+2,1)))
+    
+    if period_rank > 0:
+        b[2,1] = 1
+    if ar_rank > 0:
+        b[2 + period_rank,b_rank - 1] = 1
+        
+    c = np.matrix(np.zeros((period_rank + ar_rank + 2, 1)))
     c[0,0] = 1
-    c[2,0] = 1
+    
+    if period > 0:
+        c[2,0] = 1
 
-    if ar > 0:
-        c[2+period-1,0] = 1
-    print A
-    print b
-    print c
-    sys.exit(1)
-    return {'A':A,'b':b,'c':c,'period':period,'ar':ar}
+    if ar_rank > 0:
+        c[2 + period_rank,0] = 1
+    return {'A':A,'b':b,'c':c}
 
 def getModel2(trend=1,period=7,ar=3):
     A = np.matrix(np.zeros((period+1,period+1)))
@@ -195,12 +224,7 @@ class PyStateSpace:
             sigma_Q = np.matrix(np.diag(np.exp(theta[:self.b.shape[1]])))#+squareform(theta[self.b.shape[1]:self.b.shape[1] + n_cover]))
             offset1 = self.b.shape[1] + y[0].shape[0]
             sigma_w = np.matrix(np.diag(np.exp(theta[self.b.shape[1]:self.b.shape[1] + y[0].shape[0]])))+squareform(theta[offset1:offset1 + n_cover2])
-            offset1 += n_cover2
-
-            offset = 3+self.model['period'] - 2
-            offset2 = 2+self.model['period'] - 1
-            if self.model['ar'] > 0:
-                self.A[offset,offset2:] = np.ones(self.model['ar']) * theta[offset1:]
+            
         else:
             sigma_Q = np.matrix(np.diag(theta[:self.b.shape[1]]))
             sigma_w = np.matrix(theta[self.b.shape[1]:])
@@ -266,6 +290,9 @@ class PyStateSpace:
             #print cov_forecast
             #sys.exit(1)
             raise Exception('r is NaN')
+        if r == float("inf"):
+            raise Exception('r is inf')
+            
         return -r
 
     def mle(self, y, x0, method='Powell'):
@@ -293,8 +320,8 @@ class PyStateSpace:
             theta = np.random.random(self.b.shape[1] + 1) * x_max
             r = optimize.minimize(self.logLikelyfood,theta,method="slsqp",args=args,bounds=[(x_min,x_max)] * (self.b.shape[1] + 1))
         elif method == "Powell":
-            theta = np.random.random(self.b.shape[1] + y[0].shape[0] + n_cover2 + self.model['ar']) * 20
-            r = optimize.minimize(self.logLikelyfood,theta,method='Powell',args=args,options={'xtol': 0.0000001, 'ftol': 0.0000001})
+            theta = np.random.random(self.b.shape[1] + y[0].shape[0] + n_cover2) * 20
+            r = optimize.minimize(self.logLikelyfood,theta,method='Powell',args=args)
         else:
             theta = np.random.random(self.b.shape[1] + y[0].shape[0] + n_cover2) * 20
             return metropolis(self.logLikelyfood,theta,args)
@@ -342,13 +369,6 @@ class PyStateSpace:
             n_cover2 = (y[0].shape[0] ** 2 - y[0].shape[0]) / 2
             self.sigma_w = np.matrix(np.diag(np.exp(theta[self.b.shape[1]:self.b.shape[1] + y[0].shape[0]])))+squareform(theta[offset1:offset1 + n_cover2])
             
-            if self.model['ar'] > 0:
-                offset = 3+self.model['period'] - 2
-                offset2 = 2+self.model['period'] - 1
-                self.A[offset,offset2:] = np.ones(self.model['ar']) * theta[offset1:]
-            print self.sigma_Q
-            print self.sigma_w
-            print self.A
             #sigma_w = np.matrix(np.exp(theta[self.b.shape[1]:]))
         else:
             self.sigma_Q = np.matrix(np.diag(theta[:self.b.shape[1]]))
@@ -359,12 +379,12 @@ class PyStateSpace:
     
     def forecast(self, n_ahead):
         y_forecast = []
-        state = self.state_predictor[-1]
+        #state = self.state_predictor[-1]
+        state = self.state_smooth[-1]
+        
         print self.sigma_w
         for i in range(n_ahead):
             state = self.A * state
-            sigma = np.sqrt(self.sigma_w[0,0]) if self.sigma_w[0,0] >= 1.0 else self.sigma_w[0,0]/1.5
-            #y_forecast.append(self.c.T * state + np.random.randn() * sigma)
             y_forecast.append(self.c.T * state)
             
         return y_forecast[1:]
@@ -376,7 +396,18 @@ if __name__ == "__main__":
     """
     
     df1 = pd.read_csv("ts2.txt")
-    sample = df1[df1["ts1"] > 0][df1["ts2"] > 0].as_matrix()
+    
+    # estimate ar model
+    ar_rank = 3
+    ts1 = pd.TimeSeries(df1[df1["ts1"] > 0]["ts1"].as_matrix(),index=pd.to_datetime(df1[df1["ts1"] > 0]["Date"]))
+    model = ar_model.AR(ts1)
+    ar_result = model.fit(ar_rank)
+    ar_coef = ar_result.params[1:ar_rank+1].as_matrix()
+    """y_forecast = ar_result.predict(100)
+    plt.plot(y_forecast)
+    plt.show()
+    sys.exit(1)"""
+    sample = df1[df1["ts1"] > 0].as_matrix()
     #sample = df1.as_matrix()
     sample = sample[-1::-1]
     mdates.strpdate2num('%Y-%m-%d')
@@ -384,38 +415,20 @@ if __name__ == "__main__":
     #plt.show()
     #sys.exit(1)
 
-    sample = (np.array([np.matrix([x[1]]).T for x in sample]))
-    
-    """
-    sigma = np.matrix([[ 63807496.25393277,  63521784.61916471],[ 63521784.61916471,  61273850.59439901]])
-    mean = np.matrix([[ 7003.98867307],[ 7003.98867307]])
-    x = sample[0]
-        
-    print np.log(1. / (np.sqrt(2. * math.pi) ** 2 * np.sqrt(np.linalg.det(sigma)) ) ) - 0.5 * (x - mean).T * sigma.I * (x - mean)
-    print 0.5 * (x - mean).T * sigma.I * (x - mean)
-    print np.linalg.det(sigma)
-    print np.sqrt(np.linalg.det(sigma))
-    sys.exit(1)
-    """
-    
-    """df1 = pd.read_csv("ts.txt")
-    sample = df1[df1["Sale"] > 0]["Sale"].as_matrix()
-    #reverse
-    sample = sample[-1::-1]
-    sample = np.array([[x] for x in sample])
-    lag_acf = acf(sample,nlags=20)
-    print "自己相関関数:{}".format(lag_acf)"""
+    sample = np.array([np.matrix([x[1]]).T for x in sample])
 
-    model = getModel(1,6,ar=2)
+    #model = getModelAR(ar_coef)
+    model = getModel(1,12,ar=ar_rank,ar_coef=ar_coef)
     state_space = PyStateSpace(model)
-    state_smooth, _ = state_space.fit(sample,repeat=8,mle_method='Powell')
-    sample_predict = state_space.forecast(2)
+    #state_smooth, _ = state_space.fit(sample,repeat=1,mle_method='Powell')
+    state_smooth, _ = state_space.fit(sample,repeat=2,mle_method='Powell')
+    sample_predict = state_space.forecast(200)
     state_smooth = np.array([ss[0,0] for ss in state_smooth])
     sample_predict = np.array([sp[0,0] for sp in sample_predict])
 
-    plt.plot(range(state_smooth.shape[0]),(state_smooth))
-    plt.plot(range(state_smooth.shape[0]),([x[0,0] for x in sample]))
-    plt.plot(range(state_smooth.shape[0],state_smooth.shape[0]+len(sample_predict)),(sample_predict))
+    plt.plot(range(state_smooth.shape[0]),state_smooth)
+    plt.plot(range(sample.shape[0]),[x[0,0] for x in sample])
+    plt.plot(range(sample.shape[0],sample.shape[0]+len(sample_predict)),sample_predict)
     plt.show()
 
 
