@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <math.h>
+#include <time.h>
 #include <gsl/gsl_rng.h>
 #include <gsl/gsl_randist.h>
 #include <gsl/gsl_blas.h>
@@ -398,7 +399,7 @@ static PyObject *kalmanFilterInterface(PyObject *self, PyObject *args){
     sigma_Q = readArg(arg_sigma_Q);
     sigma_w = readArg(arg_sigma_w);
     
-    
+    clock_t t1 = clock();
     if(kalmanFilter(kalman,kalman->y,kalman->n_y,kalman->A,kalman->b,kalman->c,sigma_Q,sigma_w,kalman->x0) < 0)
         return Py_BuildValue("f", 1.0);
     // memory leak
@@ -418,6 +419,9 @@ static PyObject *kalmanFilterInterface(PyObject *self, PyObject *args){
     gsl_matrix_free(sigma_w);
     
     double r = loglikelihood2(kalman->n_y,kalman->y,kalman->y_forecast,kalman->cov_forecast);
+    
+    printf("time:%lf\n",(double)(clock()-t1) / CLOCKS_PER_SEC);
+
     //printf("r:%lf\n",r);
     return Py_BuildValue("f", r);
     //return Py_BuildValue("O", list);

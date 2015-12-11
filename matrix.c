@@ -1,3 +1,4 @@
+typedef double KalmanReal;
 
 void mm_mul(KalmanReal *matA,KalmanReal *matB,KalmanReal *matC,int rowsA,int colsA,int colsB){
     int i,j,k;
@@ -16,7 +17,7 @@ void mm_mul(KalmanReal *matA,KalmanReal *matB,KalmanReal *matC,int rowsA,int col
 
 void mm_mul2(KalmanReal *matA,KalmanReal *matB,KalmanReal *matC,int rowsA,int colsA,int colsB){
     int i,j,k,ib,jb,kb;
-    int ibl = 40;
+    int ibl = 100;
     KalmanReal val; 
     int N=rowsA;
     for (ib=0; ib<N; ib+=ibl)
