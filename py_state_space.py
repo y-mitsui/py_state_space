@@ -346,7 +346,7 @@ if __name__ == "__main__":
     #plt.show()
     #sys.exit(1)
 
-    sample = np.array([np.matrix([x[1]]).T for x in sample])
+    sample = np.log(np.array([np.matrix([x[1]]).T for x in sample]))
     
     """
     sigma = np.matrix([[ 63807496.25393277,  63521784.61916471],[ 63521784.61916471,  61273850.59439901]])
@@ -368,9 +368,9 @@ if __name__ == "__main__":
     lag_acf = acf(sample,nlags=20)
     print "自己相関関数:{}".format(lag_acf)"""
 
-    model = getModel(1,301)
+    model = getModel(1,12)
     state_space = PyStateSpace(model)
-    state_smooth, _ = state_space.fit(sample,repeat=1,mle_method='Powell')
+    state_smooth, _ = state_space.fit(sample,repeat=8,mle_method='Powell')
     sample_predict = state_space.forecast(100)
     state_smooth = np.array([ss[0,0] for ss in state_smooth])
     sample_predict = np.array([sp[0,0] for sp in sample_predict])
