@@ -276,7 +276,7 @@ class PyStateSpace:
             #r = np.sum(np.log(1. / np.sqrt(2. * math.pi * cov_forecast)) - (y - y_forecast)  ** 2 / (2 * cov_forecast))
             #r = np.sum(np.log(1. / (np.sqrt(2. * math.pi) ** y_dimention * np.sqrt(numpy.linalg.det(cov_forecast)) ) ) - 0.5 * (y - y_forecast).T * cov_forecast.I * (y - y_forecast))
             r = r[0,0]
-        print "theta:{} loglike:{}".format(theta,r)
+        #print "theta:{} loglike:{}".format(theta,r)
         if r != r:
             print sigma_Q
             print sigma_w
@@ -284,7 +284,7 @@ class PyStateSpace:
             print np.linalg.det(sigma_w)
             #return 1e+100
             #sys.exit(1)
-            print "r_log:{}".format(r_log)
+            #print "r_log:{}".format(r_log)
             print "cov_forecast:{}".format(cov_forecast)
             print "y_forecast:{}".format(y_forecast)
             #print cov_forecast
@@ -418,10 +418,10 @@ if __name__ == "__main__":
     sample = np.array([np.matrix([x[1]]).T for x in sample])
 
     #model = getModelAR(ar_coef)
-    model = getModel(1,12,ar=ar_rank,ar_coef=ar_coef)
+    model = getModel(1,12,ar_coef)
     state_space = PyStateSpace(model)
     #state_smooth, _ = state_space.fit(sample,repeat=1,mle_method='Powell')
-    state_smooth, _ = state_space.fit(sample,repeat=2,mle_method='Powell')
+    state_smooth, _ = state_space.fit(sample,repeat=3,mle_method='differential_evolution')
     sample_predict = state_space.forecast(200)
     state_smooth = np.array([ss[0,0] for ss in state_smooth])
     sample_predict = np.array([sp[0,0] for sp in sample_predict])

@@ -3,7 +3,7 @@ from distutils.core import setup, Extension
 module1 = Extension('kalman',
                     define_macros = [('HAVE_INLINE', '1')],
                     include_dirs = ['/usr/include/glib-2.0','/usr/lib/x86_64-linux-gnu/glib-2.0/include','/usr/include/atlas','/usr/include/apr-1.0','/usr/include/libxml2'],
-                    libraries = ['m','gsl','gslcblas'],
+                    libraries = ['m','gsl','openblas'],
                     library_dirs = ['/usr/local/lib','/usr/lib/x86_64-linux-gnu','/opt/OpenBLAS/lib'],
                     sources = ['kalman.c'],
                     extra_compile_args = [])

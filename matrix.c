@@ -1,4 +1,4 @@
-typedef double KalmanReal;
+typedef float KalmanReal;
 
 void mm_mul(KalmanReal *matA,KalmanReal *matB,KalmanReal *matC,int rowsA,int colsA,int colsB){
     int i,j,k;

@@ -420,7 +420,7 @@ static PyObject *kalmanFilterInterface(PyObject *self, PyObject *args){
     
     double r = loglikelihood2(kalman->n_y,kalman->y,kalman->y_forecast,kalman->cov_forecast);
     
-    printf("time:%lf\n",(double)(clock()-t1) / CLOCKS_PER_SEC);
+    //printf("time:%lf\n",(double)(clock()-t1) / CLOCKS_PER_SEC);
 
     //printf("r:%lf\n",r);
     return Py_BuildValue("f", r);
