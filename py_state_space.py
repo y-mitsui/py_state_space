@@ -220,11 +220,12 @@ class PyStateSpace:
         
         #n_cover = (self.b.shape[1] ** 2 - self.b.shape[1]) / 2
         n_cover2 = (y[0].shape[0]** 2 - y[0].shape[0]) / 2
-        if method == 'Powell' or method == 'differential_evolution':
-            sigma_Q = np.matrix(np.diag(np.exp(theta[:self.b.shape[1]])))#+squareform(theta[self.b.shape[1]:self.b.shape[1] + n_cover]))
-            offset1 = self.b.shape[1] + y[0].shape[0]
-            sigma_w = np.matrix(np.diag(np.exp(theta[self.b.shape[1]:self.b.shape[1] + y[0].shape[0]])))+squareform(theta[offset1:offset1 + n_cover2])
-            
+        if method == "L-BFGS-B" or method == 'Nelder-Mead' or method == 'Powell' or method == 'differential_evolution':
+            #sigma_Q = np.matrix(np.diag(np.exp(theta[:self.b.shape[1]])))#+squareform(theta[self.b.shape[1]:self.b.shape[1] + n_cover]))
+            sigma_Q = np.matrix(np.diag([0.] * self.b.shape[1]))
+            #offset1 = self.b.shape[1] + y[0].shape[0]
+            #sigma_w = np.matrix(np.diag(np.exp(theta[self.b.shape[1]:self.b.shape[1] + y[0].shape[0]])))+squareform(theta[offset1:offset1 + n_cover2])
+            sigma_w = np.matrix(np.exp(theta[0]))
         else:
             sigma_Q = np.matrix(np.diag(theta[:self.b.shape[1]]))
             sigma_w = np.matrix(theta[self.b.shape[1]:])
@@ -285,8 +286,8 @@ class PyStateSpace:
             #return 1e+100
             #sys.exit(1)
             #print "r_log:{}".format(r_log)
-            print "cov_forecast:{}".format(cov_forecast)
-            print "y_forecast:{}".format(y_forecast)
+            #print "cov_forecast:{}".format(cov_forecast)
+            #print "y_forecast:{}".format(y_forecast)
             #print cov_forecast
             #sys.exit(1)
             raise Exception('r is NaN')
@@ -295,7 +296,7 @@ class PyStateSpace:
             
         return -r
 
-    def mle(self, y, x0, method='Powell'):
+    def mle(self, y, x0, method='Powell',init_theta=[]):
         arg_x0 = [x[0] for x in x0]
         arg_y = [x.T.tolist()[0] for x in y]
         context = kalman.init(arg_y,self.A.tolist(),self.b.tolist(),self.c.tolist(), arg_x0, y[0].shape[0],x0.shape[0], self.b.shape[1])
@@ -307,8 +308,8 @@ class PyStateSpace:
         
         args = (y, x0, context, method)
         
-        n_param = self.b.shape[1] + y[0].shape[0] + n_cover2
-        
+        #n_param = self.b.shape[1] + y[0].shape[0] + n_cover2
+        n_param = 1
         if method == "differential_evolution":
             x_min=-15
             x_max=15
@@ -316,9 +317,11 @@ class PyStateSpace:
             bounds1 = [(x_min,x_max)] * (self.b.shape[1] + y[0].shape[0])
             bounds2 = [(-1e+7,1e+7)] * n_cover2 
             r = optimize.differential_evolution(self.logLikelyfood, args=args,bounds=bounds1 + bounds2,popsize=150,mutation=0.25,recombination=0.25,tol=0.001)
-        elif method == "slsqp":
-            theta = np.random.random(self.b.shape[1] + 1) * x_max
-            r = optimize.minimize(self.logLikelyfood,theta,method="slsqp",args=args,bounds=[(x_min,x_max)] * (self.b.shape[1] + 1))
+        elif method == "Nelder-Mead" or method == "L-BFGS-B":
+            
+            theta = init_theta if init_theta != [] else np.random.random(n_param + 1) * 10
+            print theta
+            r = optimize.minimize(self.logLikelyfood,theta,method=method,args=args,bounds=[(x_min,x_max)] * (self.b.shape[1] + 1))
         elif method == "Powell":
             theta = np.random.random(self.b.shape[1] + y[0].shape[0] + n_cover2) * 20
             r = optimize.minimize(self.logLikelyfood,theta,method='Powell',args=args)
@@ -343,7 +346,7 @@ class PyStateSpace:
             
         return np.array(self.state_smooth), np.array(self.covariance_smooth)
 
-    def fit(self, y, x0=None,repeat=1,mle_method='differential_evolution'):
+    def fit(self, y, x0=None,repeat=5,mle_method='differential_evolution'):
         parameters = []
         
         if x0 == None:
@@ -361,13 +364,20 @@ class PyStateSpace:
         print "len(parameters):%d"%(len(parameters))
         theta = parameters[np.argmin(map(lambda x: x[1],parameters))][0]
         
+        #theta ,_ = self.mle(y, x0, method="Nelder-Mead")
+        #print theta
+        #theta ,_ = self.mle(y, x0, method="L-BFGS-B",init_theta=theta)
+        #print theta
+        
         #n_cover = (self.b.shape[1] ** 2 - self.b.shape[1]) / 2
         
-        if mle_method == 'Powell' or mle_method == 'differential_evolution':
-            self.sigma_Q = np.matrix(np.diag(np.exp(theta[:self.b.shape[1]])))#+squareform(theta[self.b.shape[1]:self.b.shape[1] + n_cover]))
+        if mle_method == "L-BFGS-B" or  mle_method == 'Nelder-Mead' or mle_method == 'Powell' or mle_method == 'differential_evolution':
+            #self.sigma_Q = np.matrix(np.diag(np.exp(theta[:self.b.shape[1]])))#+squareform(theta[self.b.shape[1]:self.b.shape[1] + n_cover]))
+            self.sigma_Q = np.matrix(np.diag([0] * self.b.shape[1]))
             offset1 = self.b.shape[1] + y[0].shape[0]
             n_cover2 = (y[0].shape[0] ** 2 - y[0].shape[0]) / 2
-            self.sigma_w = np.matrix(np.diag(np.exp(theta[self.b.shape[1]:self.b.shape[1] + y[0].shape[0]])))+squareform(theta[offset1:offset1 + n_cover2])
+            #self.sigma_w = np.matrix(np.diag(np.exp(theta[self.b.shape[1]:self.b.shape[1] + y[0].shape[0]])))+squareform(theta[offset1:offset1 + n_cover2])
+            self.sigma_w = np.matrix(np.exp(theta[0]))
             
             #sigma_w = np.matrix(np.exp(theta[self.b.shape[1]:]))
         else:
@@ -415,14 +425,15 @@ if __name__ == "__main__":
     #plt.show()
     #sys.exit(1)
 
-    sample = np.array([np.matrix([x[1]]).T for x in sample])
+    sample = np.array([np.matrix([x[1] / 500]).T for x in sample])
 
     #model = getModelAR(ar_coef)
-    model = getModel(1,12,ar_coef)
+    model = getModel(1,12)
     state_space = PyStateSpace(model)
     #state_smooth, _ = state_space.fit(sample,repeat=1,mle_method='Powell')
-    state_smooth, _ = state_space.fit(sample,repeat=3,mle_method='differential_evolution')
-    sample_predict = state_space.forecast(200)
+    #print sample
+    state_smooth, _ = state_space.fit(sample,repeat=5,mle_method='Powell')
+    sample_predict = state_space.forecast(100)
     state_smooth = np.array([ss[0,0] for ss in state_smooth])
     sample_predict = np.array([sp[0,0] for sp in sample_predict])
 

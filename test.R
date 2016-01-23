@@ -8,7 +8,7 @@ data <- ts(shop1[sortlist,]$Sale,frequency = 365,start=c(2013,1,1))
 
 build.4 <- function(theta){
     dlmModPoly(order=2,dV=exp(theta[1]),dW=c(0,0))+
-    dlmModTrig(s=301,q=1, dV=0,dW=0)+
+    #dlmModTrig(s=301,q=1, dV=0,dW=0)+
     dlmModSeas(fr=12,dW=c(0,rep(0,10)),dV=0)
 }
 
