@@ -73,7 +73,7 @@ class PyStateSpace:
     v ~ N(0,sigma[0])
     w ~ N(0,sigma[1])
     A: m X m numpy.matrix
-    b: m X 1 numpy.matrix
+    b: m X n numpy.matrix
     c: l X 1 numpy.matrix
     """
     def __init__(self, model, opt_min=1e-8, opt_max=1e+8, sigma=None, debug=False):
@@ -94,10 +94,10 @@ class PyStateSpace:
         self.opt_min = opt_min
         self.opt_max = opt_max
         
-    def filter(self, y, sigma_Q, sigma_w ,x0, gamma=100):
+    def filter(self, y, sigma_Q, sigma_w , x0, gamma=100):
         u""" [CLASSES] カルマンフィルタによる状態平均ベクトル・分散共分散の推定
         Return value:
-        """covariance_predictor
+        """
         n_dimention = x0.shape[0]
         self.n_sample = y.shape[0]
         self.state_filter, self.state_predictor = [], []
@@ -107,7 +107,8 @@ class PyStateSpace:
         self.state_filter.append(x0)
         gamma = sigma_w[0,0]
         self.covariance_filter.append(np.eye(n_dimention) * gamma)
-        constant_coveriance = self.b * sigma_Q * self.b.T
+        #constant_coveriance = self.b * sigma_Q * self.b.T
+        constant_coveriance = sigma_Q
         for each_y in y:
             #1期先予測  
             self.state_predictor.append(self.A * self.state_filter[-1])
@@ -157,31 +158,57 @@ class PyStateSpace:
         
         return -r
 
-    def em(sample_y, max_iter=100):
-        x0 = np.matrix(np.zeros((self.b.shape[0], 1)))
-        x0[0, 0] = np.average(y)
+    def em(self, sample_y, max_iter=50):
+        n_sample = len(sample_y)
+        n_dimentions = sample_y[0].shape[0]
+        x0 = np.matrix(np.random.rand(self.b.shape[0], 1))
+        sigma_Q = np.matrix(np.diag(np.random.rand(self.b.shape[0])))
+        sigma_w = np.matrix(np.random.rand(n_dimentions))
         for i in range(max_iter):
-            sigma_Q = np.matrix(np.diag(theta[:self.b.shape[1]]))
-            sigma_w = np.matrix(theta[self.b.shape[1]:])
-            self.filter(self, sample_y, sigma_Q, sigma_w , x0):
+            print "i", i
+            print "sigma_w", sigma_w
+            
+            print "x0", x0
+            self.filter(sample_y, sigma_Q, sigma_w , x0)
             self.smooth()
             
-            state_covers = []
-            e_zz_prev = self.covariance_smooth[0] + self.state_smooth[0] * self.state_smooth[0].T
-            for j in range(1, sample_y.shape[0]):
-                gain = self.covariance_filter[j] * self.A.T * self.covariance_predictor[j + 1].I
-                e_zz1 = self.covariance_smooth[j] * gain + self.state_smooth[j] * self.state_smooth[j - 1].T
+            sigma_Q = np.matrix(np.zeros(sigma_Q.shape))
+            coef = 1.0 / (sample_y.shape[0] - 1)
+            for j in range(1, n_sample):
                 e_zz = self.covariance_smooth[j] + self.state_smooth[j] * self.state_smooth[j].T
-                state_covers.append(e_zz - self.A * e_z_1z - e_zz_1 * self.A.T + self.A * e_zz_prev * self.A.T)
-                e_zz_prev = e_zz
-                
-            state_cover = np.sum(state_covers) / (sample_y.shape[0] - 1)
+                e_zz1 = self.covariance_smooth[j] * self.smooth_gain[j - 1].T + self.state_smooth[j] * self.state_smooth[j - 1].T
+                #e_z1z = self.smooth_gain[j - 1].T * self.covariance_smooth[j] + self.state_smooth[j - 1].T * self.state_smooth[j]
+                e_z1z = self.covariance_smooth[j - 1] * self.smooth_gain[j].T + self.state_smooth[j -1 ] * self.state_smooth[j].T
+                e_z1z1 = self.covariance_smooth[j - 1] + self.state_smooth[j - 1] * self.state_smooth[j - 1].T
+                """
+                print "self.covariance_smooth[j]", self.covariance_smooth[j]
+                print "self.state_smooth[j]", self.state_smooth[j]
+                print "self.smooth_gain[j - 1]", self.smooth_gain[j - 1]
+                print "e_zz", e_zz
+                print "e_zz1", e_zz1
+                print "e_z1z", e_z1z
+                print "e_z1z1", e_z1z1
+                """
+                sigma_Q += (e_zz - self.A * e_z1z - e_zz1 * self.A.T + self.A * e_z1z1 * self.A.T) * coef
+                #sigma_Q /= sample_y.shape[0] - 1
+                #print "sigma_Q", sigma_Q
+                #if j == 1:
+                #    sys.exit(1)
+            print "sigma_Q", sigma_Q
+            #sigma_Q = sigma_Q * coef
+            #if i == 10:
+            #    break
             
-            sample_covers = []
+            sigma_w = np.zeros(sigma_w.shape)
             for j, each_y in enumerate(sample_y):
                 e_zz = self.covariance_smooth[j] + self.state_smooth[j] * self.state_smooth[j].T
-                each_y * each_y.T - self.c * self.state_smooth[j] * each_y.T - each_y * self.state_smooth[j].T * self.c.T + self.c * e_zz * self.c.T
+                sigma_w += each_y * each_y.T - self.c.T * self.state_smooth[j] * each_y.T - each_y * self.state_smooth[j].T * self.c + self.c.T * e_zz * self.c
+            sigma_w /= sample_y.shape[0]
             
+            x0 = self.state_smooth[j]
+            
+        return (sigma_Q, sigma_w)
+        
     def mle(self, sample_y, x0, method, init_theta=[]):
         context = KalmanFilterWrap(sample_y, self.A, self.b, self.c, x0)
         
@@ -211,40 +238,44 @@ class PyStateSpace:
         self.state_smooth, self.covariance_smooth = [0.] * self.n_sample, [0.] * self.n_sample
         self.state_smooth[-1] = self.state_filter[-1]
         self.covariance_smooth[-1] = self.covariance_filter[-1]
-        
-        for idx in range(self.n_sample-2,-1,-1):
+        self.smooth_gain = [None] * self.n_sample
+        for idx in range(self.n_sample - 2, -1, -1):
             gain = self.covariance_filter[idx] * self.A.T * self.covariance_predictor[idx + 1].I
             self.state_smooth[idx] = self.state_filter[idx] + gain * ( self.state_smooth[idx+1] - self.state_predictor[idx+1] )
             self.covariance_smooth[idx] = self.covariance_filter[idx] + gain * ( self.covariance_smooth[idx+1] - self.covariance_predictor[idx+1] ) * gain.T
+            self.smooth_gain[idx] = gain
             
         return np.array(self.state_smooth), np.array(self.covariance_smooth)
 
     def fit(self, y, x0=None, repeat=5, mle_method='differential_evolution'):
-        parameters = []
-        
         if x0 == None:
             x0 = np.matrix(np.zeros((self.b.shape[0],1)))
             x0[0, 0] = np.average(y)
+            self.x0 = x0
             
-        self.x0 = x0
-        parameters.append(self.mle(y, x0, method=mle_method))
-        
-        for i in range(repeat):
-            try:
-                parameters.append(self.mle(y, x0, method=mle_method))
-            except Exception as exc:
-                print "Exception Error: {}".format(exc)
-                continue
-            #print "i:{0} result:{1}".format(i,parameters[-1])
-        if parameters == []:
-             raise ValueError
-             
-        sort_index = np.argmin(map(lambda x: x[1], parameters))
-        theta, self.log_ff = parameters[sort_index]
-        self.log_ff = -self.log_ff
-        
-        self.sigma_Q = np.matrix(np.diag(theta[:self.b.shape[1]]))
-        self.sigma_w = np.matrix(theta[self.b.shape[1]:])
+        if True:
+            self.sigma_Q, self.sigma_w = self.em(y)
+        else:
+            parameters = []
+            
+            parameters.append(self.mle(y, x0, method=mle_method))
+            
+            for i in range(repeat):
+                try:
+                    parameters.append(self.mle(y, x0, method=mle_method))
+                except Exception as exc:
+                    print "Exception Error: {}".format(exc)
+                    continue
+                #print "i:{0} result:{1}".format(i,parameters[-1])
+            if parameters == []:
+                 raise ValueError
+                 
+            sort_index = np.argmin(map(lambda x: x[1], parameters))
+            theta, self.log_ff = parameters[sort_index]
+            self.log_ff = -self.log_ff
+            
+            self.sigma_Q = np.matrix(np.diag(theta[:self.b.shape[1]]))
+            self.sigma_w = np.matrix(theta[self.b.shape[1]:])
         
         self.filter(y, self.sigma_Q, self.sigma_w, x0)
         return self.smooth()
@@ -272,7 +303,7 @@ if __name__ == "__main__":
     def createTrendModel(trend):
         return StateSpaceTrend(trend)
     
-    
+    np.random.seed(12345)
     model = createModel(2, 4)
     print model.mat_A
     print model.mat_b
@@ -296,6 +327,7 @@ if __name__ == "__main__":
     plt.show()
     #sys.exit(1)
     sample = np.matrix(sample.as_matrix().reshape(-1, 1))
+    sample = (sample - np.average(sample)) / np.std(sample)
     #ar_rank = 3
     #model = ar_model.AR(sample)
     #ar_result = model.fit(ar_rank)
@@ -328,7 +360,7 @@ if __name__ == "__main__":
     """
     #model = createModel(min_param[0], min_param[1])
     model = createModel(2, 7)
-
+    print "model.mat_b", model.mat_b
     state_space = PyStateSpace(model)
     state_smooth, _ = state_space.fit(sample, repeat=2, mle_method='L-BFGS-B')
     sample_predict = state_space.forecast(20)
