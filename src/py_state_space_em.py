@@ -6,61 +6,6 @@ import matplotlib.pyplot as plt
 import sys
 import datetime
 from scipy import stats
-
-class StateSpaceModel:
-    def __init__(self, mat_A, mat_b, mat_c):
-        self.mat_A = mat_A
-        self.mat_b = mat_b
-        self.mat_c = mat_c
-        
-    def __add__(self, right_obj):
-        new_mat_A = np.matrix(np.zeros((self.mat_A.shape[0] + right_obj.mat_A.shape[0], self.mat_A.shape[1] + right_obj.mat_A.shape[1])))
-        new_mat_b = np.matrix(np.zeros((self.mat_b.shape[0] + right_obj.mat_b.shape[0], self.mat_b.shape[1] + right_obj.mat_b.shape[1])))
-        new_mat_c = np.matrix(np.zeros((self.mat_c.shape[0] + right_obj.mat_c.shape[0], 1)))
-    
-        new_mat_A[:self.mat_A.shape[0], :self.mat_A.shape[1]] = self.mat_A
-        new_mat_A[self.mat_A.shape[0]:, self.mat_A.shape[1]:] = right_obj.mat_A
-        new_mat_b[:self.mat_b.shape[0], :self.mat_b.shape[1]] = self.mat_b
-        new_mat_b[self.mat_b.shape[0]:, self.mat_b.shape[1]:] = right_obj.mat_b
-        new_mat_c[:self.mat_c.shape[0], :] = self.mat_c
-        new_mat_c[self.mat_c.shape[0]:, :] = right_obj.mat_c
-        
-        return StateSpaceModel(new_mat_A, new_mat_b, new_mat_c)
-        
-
-def StateSpaceTrend(order):
-    mat_A = np.matrix(np.zeros((order, order)))
-    if order == 1:
-        mat_A[0] = 1
-    elif order == 2:
-        mat_A[0:2,0:2] = np.matrix([[2,-1],[1,0]])
-    elif order == 3:
-        mat_A[0:3,0:3] = np.matrix([[3, -3, -1],[1, 0, 0],[0, 1, 0]])
-        
-    mat_b = np.matrix(np.zeros((order, 1)))
-    mat_b[0, 0] = 1
-    
-    mat_c = np.matrix(np.zeros((order, 1)))
-    mat_c[0, 0] = 1
-    
-    return StateSpaceModel(mat_A, mat_b, mat_c)
-    
-def StateSpacePriod(priod):
-    if priod < 1:
-        raise ValueError("invalid priod ", priod)
-        
-    period_rank = priod - 1
-    mat_A = np.matrix(np.zeros((period_rank, period_rank)))
-    mat_A[0, 0:period_rank] = np.ones(period_rank) * -1
-    mat_A[1:1 + period_rank - 1, :period_rank - 1] = np.diag(np.ones(period_rank - 1))
-        
-    mat_b = np.matrix(np.zeros((period_rank, 1)))
-    mat_b[0, 0] = 1
-    
-    mat_c = np.matrix(np.zeros((period_rank, 1)))
-    mat_c[0, 0] = 1
-    
-    return StateSpaceModel(mat_A, mat_b, mat_c)
     
 u""" 状態空間モデルを解析 """
         
@@ -78,22 +23,12 @@ class PyStateSpace:
     C: l X 1 numpy.matrix
     """
     
-    def __init__(self, model, opt_min=1e-8, opt_max=1e+8, sigma=None, debug=False):
+    def __init__(self, n_state_dimentions):
         u""" [CLASSES] 
         Keyword arguments:
-        A -- numpy.matrix 
-        b -- numpy.matrix
-        c -- numpy.matrix
-        sigma -- numpy.ndarray
         """
         
-        self.A = model.mat_A
-        self.C = model.mat_c.T
-        
-        self.sigma = sigma
-        self.model = model
-        self.opt_min = opt_min
-        self.opt_max = opt_max
+        self.n_state_dimentions = n_state_dimentions
         
     def filter(self, sample_x, kai, sigma , mu0, P0):
         u""" [CLASSES] カルマンフィルタによる状態平均ベクトル・分散共分散の推定
@@ -129,27 +64,36 @@ class PyStateSpace:
             self.smooth_J[idx] = self.V[idx] * self.A.T * self.P[idx].I
             self.state_smooth[idx] = self.mu[idx] + self.smooth_J[idx] * ( self.state_smooth[idx + 1] - self.A * self.mu[idx] )
             self.covariance_smooth[idx] = self.V[idx] + self.smooth_J[idx] * ( self.covariance_smooth[idx + 1] - self.P[idx] ) * self.smooth_J[idx].T
+            if any(np.isnan(np.asarray(self.state_smooth[idx]).reshape(-1))):
+                print "nan", self.state_smooth[idx]
+                sys.exit(1)        
         return self.state_smooth
 
-    def logLikelyfood(self, sample_x, sigma, show):
+    def logLikelyfood(self, sample_x, kai, sigma, mu0, show):
         r = 0.
+        r += stats.multivariate_normal.logpdf(np.asarray(self.state_smooth[0]).reshape(-1), np.asarray(mu0).reshape(-1) , kai)
+        r += stats.norm.logpdf(sample_x[0, 0], (self.C * self.state_smooth[0])[0, 0], np.sqrt(sigma[0, 0]))
+        state_prev = self.state_smooth[0]
         for each_x, state in zip(sample_x, self.state_smooth):
             if show:
                 print "state", state,
                 print "x", each_x[0]
+            r += stats.multivariate_normal.logpdf(np.asarray(state).reshape(-1), np.asarray(self.A * state_prev).reshape(-1) ,  kai)
             r += stats.norm.logpdf(each_x[0], (self.C * state)[0, 0], np.sqrt(sigma[0, 0]))
+            state_prev = state
         return r
         
-    def em(self, sample_y, max_iter=1000):
+    def em(self, sample_y, max_iter=600):
         n_sample = len(sample_y)
         n_dimentions = sample_y[0].shape[0]
         
+        self.A = np.matrix(np.random.rand(self.n_state_dimentions, self.n_state_dimentions))
+        self.C = np.matrix(np.random.rand(n_dimentions, self.n_state_dimentions))
         kai = np.matrix(np.diag(np.random.rand(self.A.shape[0])))
-        print kai
         sigma = np.matrix(np.diag(np.random.rand(n_dimentions)))
-        sigma[0, 0] = 1
         mu0 = np.matrix(np.random.rand(self.A.shape[0], 1))
         P0 = np.matrix(np.diag(np.random.rand(kai.shape[0])))
+        
         for i in range(max_iter):
             print "i", i
             #print "sigma", sigma
@@ -157,42 +101,53 @@ class PyStateSpace:
             self.filter(sample_y, kai, sigma , mu0, P0)
             self.smooth()
             
+            e_z, e_zz, e_zz1, e_z1z, e_z1z1 = [], [], [], [], []
+            for j in range(0, n_sample):
+                e_z.append(self.state_smooth[j])
+                e_zz.append(self.covariance_smooth[j] + self.state_smooth[j] * self.state_smooth[j].T)
+                if j != 0:
+                    e_zz1.append(self.covariance_smooth[j] * self.smooth_J[j - 1].T + self.state_smooth[j] * self.state_smooth[j - 1].T)
+                    e_z1z.append(self.smooth_J[j - 1] * self.covariance_smooth[j].T + self.state_smooth[j - 1] * self.state_smooth[j].T)
+                    e_z1z1.append(e_zz[-2])
+                else:
+                    e_zz1.append(None)
+                    e_z1z.append(None)
+                    e_z1z1.append(None)
+
+            A_left, A_right = np.matrix(np.zeros(self.A.shape)), np.matrix(np.zeros(self.A.shape))
+            for j in range(1, n_sample):
+                A_left += e_zz1[j]
+                A_right += e_z1z1[j]
+            self.A = A_left * A_right.I
+
             kai = np.matrix(np.zeros(kai.shape))
             for j in range(1, n_sample):
-                e_zz = self.covariance_smooth[j] + self.state_smooth[j] * self.state_smooth[j].T
-                e_zz1 = self.covariance_smooth[j] * self.smooth_J[j - 1].T + self.state_smooth[j] * self.state_smooth[j - 1].T
-                e_z1z = self.smooth_J[j - 1] * self.covariance_smooth[j].T + self.state_smooth[j - 1] * self.state_smooth[j].T
-                e_z1z1 = self.covariance_smooth[j - 1] + self.state_smooth[j - 1] * self.state_smooth[j - 1].T
-                """
-                print "self.covariance_smooth[j]", self.covariance_smooth[j]
-                print "self.state_smooth[j]", self.state_smooth[j]
-                print "self.smooth_J[j - 1]", self.smooth_J[j - 1]
-                print "e_zz", e_zz
-                print "e_zz1", e_zz1
-                print "e_z1z", e_z1z
-                print "e_z1z1", e_z1z1
-                """
-                kai += e_zz - self.A * e_z1z - e_zz1 * self.A.T + self.A * e_z1z1 * self.A.T
+                kai += e_zz[j] - self.A * e_z1z[j] - e_zz1[j] * self.A.T + self.A * e_z1z1[j] * self.A.T
             kai /= sample_y.shape[0] - 1
-            kai = np.minimum(kai, 100.)
-            if i % 10 == 0:
-                print "kai", kai
-                print np.diag(kai)
             
-            """
+            C_left, C_right = np.matrix(np.zeros(self.C.shape)), np.matrix(np.zeros(e_zz[0].shape))
+            for j, each_y in enumerate(sample_y):
+                C_left += each_y * e_z[j].T
+                C_right += e_zz[j]
+            self.C = C_left * C_right.I
+
             sigma = np.zeros(sigma.shape)
             for j, each_y in enumerate(sample_y):
-                e_zz = self.covariance_smooth[j] + self.state_smooth[j] * self.state_smooth[j].T
-                sigma += each_y * each_y.T - self.C * self.state_smooth[j] * each_y.T - each_y * self.state_smooth[j].T * self.C.T + self.C * e_zz * self.C.T
+                sigma += each_y * each_y.T - self.C * self.state_smooth[j] * each_y.T - each_y * self.state_smooth[j].T * self.C.T + self.C * e_zz[j] * self.C.T
             sigma /= sample_y.shape[0]
-            sigma[0, 0] = 1
-            """
-            
+
             mu0 = self.state_smooth[0]
-            e_zz = self.covariance_smooth[0] + self.state_smooth[0] * self.state_smooth[0].T
-            P0 = e_zz - self.state_smooth[0] * self.state_smooth[0].T
-            print "logLikelyfood", self.logLikelyfood(sample_y, sigma, i == 200)
-            
+            e_zz0 = self.covariance_smooth[0] + self.state_smooth[0] * self.state_smooth[0].T
+            P0 = e_zz0 - self.state_smooth[0] * self.state_smooth[0].T
+            #print "logLikelyfood"
+            #print self.logLikelyfood(sample_y, kai, sigma, mu0, i == 200)
+            if i % 10 == 0:
+                print "kai", kai
+                print  "sigma", sigma
+                print  "A", self.A
+                print  "C", self.C
+                print "self.state_smooth[-1]", self.state_smooth[-1]
+
         return (kai, sigma, mu0, P0)
         
     def fit(self, y, x0=None, repeat=5, mle_method='differential_evolution'):
@@ -217,74 +172,26 @@ if __name__ == "__main__":
     u"""
     Example
     """
-    def createModel(trend, priod):
-        return StateSpaceTrend(trend) + StateSpacePriod(priod)
-        
-    def createTrendModel(trend):
-        return StateSpaceTrend(trend)
     
-    model = createModel(2, 4)
-    print model.mat_A
-    print model.mat_b
-    print model.mat_c
-    
-    np.random.seed(12345)
+    np.random.seed(123)
     
     def generateRandomWalk(n_sample, start_date):
         samples = [np.random.randn()]
         date_indexes = [pd.to_datetime(start_date)]
         for i in range(n_sample):
-            #samples.append(np.sin(i / 10))
-            #samples.append(1.002 * samples[-1] + np.random.randn() + i % 7 * 1e-2)
-            samples.append(0.99 * samples[-1] + np.random.randn() * 1.5 + i % 7 * 1e-0)
+            samples.append(0.99 * samples[-1] + np.random.randn() * 1e-0+ i % 3 * 1)
             date_indexes.append(date_indexes[-1] + datetime.timedelta(days=1))
             
-        return pd.TimeSeries(samples, index=date_indexes)
+        return pd.Series(samples, index=date_indexes)
         
     sample = generateRandomWalk(200, "2017-01-01")
     sample.plot()
     plt.show()
-    #sys.exit(1)
     sample = np.matrix(sample.as_matrix().reshape(-1, 1))
-    sample = (sample - np.average(sample)) / np.std(sample)
-    #ar_rank = 3
-    #model = ar_model.AR(sample)
-    #ar_result = model.fit(ar_rank)
-    #ar_coef = ar_result.params[1:ar_rank+1].as_matrix()
-    """y_forecast = ar_result.predict(100)
-    plt.plot(y_forecast)
-    plt.show()
-    sys.exit(1)"""
-
-    #model = getModelAR(ar_coef)
-    """
-    min_aic = float('inf')
-    for n_trend in range(1, 4):
-        for n_priod in range(2, 14):
-            #model = getModel(n_trend, n_priod)
-            #model = getModel(2, 4)
-            model = createModel(n_trend, n_priod)
-            state_space = PyStateSpace(model)
-            try:
-                state_space.fit(sample, repeat=0, mle_method='L-BFGS-B')
-            except Exception as e:
-                print e
-                continue
-            print n_trend, n_priod, " AIC:", state_space.AIC()
-            if min_aic > state_space.AIC():
-                min_aic = state_space.AIC()
-                min_param = (n_trend, n_priod)
-    print "min_param", min_param
-    print "min_aic", min_aic
-    """
-    #model = createModel(min_param[0], min_param[1])
-    model = createModel(2, 7)
-    #model = createTrendModel(2)
-    print "model.mat_b", model.mat_b
-    state_space = PyStateSpace(model)
+    state_space = PyStateSpace(4)
     state_smooth = state_space.fit(sample, repeat=2, mle_method='L-BFGS-B')
     sample_predict = state_space.forecast(100)
-    state_smooth = np.array([(model.mat_c.T * ss)[0, 0] for ss in state_smooth])
+    state_smooth = np.array([(state_space.C * ss)[0, 0] for ss in state_smooth])
     sample_predict = np.array([sp[0,0] for sp in sample_predict])
 
     plt.plot(range(state_smooth.shape[0]),state_smooth, c='g')
